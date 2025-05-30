@@ -182,25 +182,6 @@ const AuthPage = ({ initialPage = 'login' }) => {
                 />
               </div>
             </div>
-
-            {/* Partner Email Field */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Partner's Email Address</label>
-              <div className="relative">
-                <Heart className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-pink-400" />
-                <input
-                  type="email"
-                  name="partnerEmail"
-                  value={formData.partnerEmail}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all"
-                  placeholder="partner@email.com"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Password Field */}
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-300">Password</label>
               <div className="relative">

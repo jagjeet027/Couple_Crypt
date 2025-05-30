@@ -1,16 +1,28 @@
 import React from 'react';
-import Header from './Header';
+import { useState } from 'react';
 import HomePage from './HomePage';
-import Footer from './Footer';
+import SecureRoomPortal from './SecureRoomPortal';
 
 // Assuming you have some styles for the app
-
 const PrivacyChatApp = () => {
+  const [currentView, setCurrentView] = useState('home');
+
+  const navigateToSecureRoom = () => {
+    setCurrentView('secure-room');
+  };
+
+  const navigateToHome = () => {
+    setCurrentView('home');
+  };
+
   return (
-    <div className="min-h-screen bg-slate-900">
-      <Header />
-      <HomePage />
-      <Footer />
+    <div className="min-h-screen">
+      {currentView === 'home' && (
+        <HomePage onNavigateToSecureRoom={navigateToSecureRoom} />
+      )}
+      {currentView === 'secure-room' && (
+        <SecureRoomPortal onNavigateHome={navigateToHome} />
+      )}
     </div>
   );
 };
