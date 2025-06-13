@@ -1,298 +1,552 @@
 import React, { useState } from 'react';
-import { Shield, Lock, Heart, Mail, Eye, EyeOff, ArrowRight, Sparkles, Users } from 'lucide-react';
+import { Eye, EyeOff, User, Mail, Lock, Upload, X } from 'lucide-react';
 
-const AuthPage = ({ initialPage = 'login' }) => {
-  const [currentPage, setCurrentPage] = useState(initialPage); // Accept initial page as prop
+const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
+  const [currentPage, setCurrentPage] = useState(initialPage);
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [formData, setFormData] = useState({
+  const [isLoading, setIsLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  // SignIn form state
+  const [signInData, setSignInData] = useState({
+    email: '',
+    password: ''
+  });
+
+  // SignUp form state
+  const [signUpData, setSignUpData] = useState({
+    username: '',
     email: '',
     password: '',
     confirmPassword: '',
-    partnerEmail: ''
+    gender: '',
+    age: '',
+    profileImage: null
   });
 
-  const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const [imagePreview, setImagePreview] = useState(null);
+
+  // API Base URL
+  const API_BASE_URL = 'http://localhost:2004/api/auth';
+
+  // Store authentication data (now using localStorage instead of sessionStorage)
+  const storeAuthData = (token, user) => {
+    try {
+      // Store in localStorage instead of sessionStorage
+      localStorage.setItem('authToken', token);
+      localStorage.setItem('userData', JSON.stringify(user));
+
+    } catch (error) {
+      console.error('Error storing authentication data:', error);
+    }
   };
 
-  const handleSubmit = (e) => {
+  // Redirect to homepage function
+  const redirectToHomepage = () => {
+    try {
+      // Method 1: Use the onNavigate prop if provided
+      if (onNavigate && typeof onNavigate === 'function') {
+        onNavigate('/');
+        return;
+      }
+
+      // Method 2: Use React Router if available (programmatic navigation)
+      if (window.history && window.history.pushState) {
+        window.history.pushState({}, '', '/');
+        // Trigger a popstate event to notify React Router of the change
+        window.dispatchEvent(new Event('popstate'));
+        return;
+      }
+
+      // Method 3: Fallback to window.location (page reload)
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Error redirecting to homepage:', error);
+      // Final fallback
+      window.location.href = '/';
+    }
+  };
+
+  // Handle successful authentication
+  const handleAuthSuccess = (data, isSignUp = false) => {
+    const actionType = isSignUp ? 'Account created' : 'Login';
+    setMessage({ type: 'success', text: `${actionType} successfully! Redirecting to homepage...` });
+    
+    // Store authentication data
+    if (data.data && data.data.token && data.data.user) {
+      storeAuthData(data.data.token, data.data.user);
+    } else {
+      console.warn('Token or user data missing from response:', data);
+    }
+    
+    // Clear forms
+    if (isSignUp) {
+      setSignUpData({
+        username: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
+        gender: '',
+        age: '',
+        profileImage: null
+      });
+      setImagePreview(null);
+    } else {
+      setSignInData({ email: '', password: '' });
+    }
+    
+    // Trigger auth state change event
+    window.dispatchEvent(new Event('authStateChanged'));
+    
+    // Redirect to homepage after a short delay
+    setTimeout(() => {
+      redirectToHomepage();
+    }, 1500);
+  };
+
+  // Handle image upload
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setMessage({ type: 'error', text: 'File size must be less than 5MB' });
+        return;
+      }
+      
+      if (!file.type.startsWith('image/')) {
+        setMessage({ type: 'error', text: 'Only image files are allowed' });
+        return;
+      }
+
+      setSignUpData({ ...signUpData, profileImage: file });
+      
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (e) => setImagePreview(e.target.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Remove image
+  const removeImage = () => {
+    setSignUpData({ ...signUpData, profileImage: null });
+    setImagePreview(null);
+  };
+
+  const handleSignIn = async (e) => {
     e.preventDefault();
-    console.log('Form submitted:', formData);
+    setIsLoading(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      console.log('Making request to:', `${API_BASE_URL}/login`);
+      
+      const response = await fetch(`${API_BASE_URL}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(signInData),
+      });
+
+      console.log('Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.error('Non-JSON response:', textResponse);
+        throw new Error('Server returned non-JSON response. Check server logs.');
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        handleAuthSuccess(data, false);
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Login failed' });
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        setMessage({ type: 'error', text: 'Cannot connect to server. Please check if the server is running.' });
+      } else if (error.message.includes('JSON')) {
+        setMessage({ type: 'error', text: 'Server error. Please check server logs and try again.' });
+      } else {
+        setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const LoginPage = () => (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-800 flex items-center justify-center px-6 relative overflow-hidden">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-        <div className="absolute top-3/4 left-3/4 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
-      </div>
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage({ type: '', text: '' });
 
-      <div className="relative z-10 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-pink-600 to-purple-600 rounded-full mb-4 animate-bounce">
-            <Heart className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-2">
-            Couple<span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Crypt</span>
-          </h1>
-          <p className="text-slate-400">Welcome back to your private space</p>
+    // Validation
+    if (signUpData.password !== signUpData.confirmPassword) {
+      setMessage({ type: 'error', text: 'Passwords do not match' });
+      setIsLoading(false);
+      return;
+    }
+
+    if (signUpData.password.length < 6) {
+      setMessage({ type: 'error', text: 'Password must be at least 6 characters' });
+      setIsLoading(false);
+      return;
+    }
+
+    // Additional validation
+    if (parseInt(signUpData.age) < 13) {
+      setMessage({ type: 'error', text: 'You must be at least 13 years old to create an account' });
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('username', signUpData.username);
+      formData.append('email', signUpData.email);
+      formData.append('password', signUpData.password);
+      formData.append('gender', signUpData.gender);
+      formData.append('age', signUpData.age);
+      
+      if (signUpData.profileImage) {
+        formData.append('profileImage', signUpData.profileImage);
+      }
+
+      console.log('Making request to:', `${API_BASE_URL}/signup`);
+      
+      const response = await fetch(`${API_BASE_URL}/signup`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      console.log('Response status:', response.status);
+
+      // Check if response is OK
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.error('Non-JSON response:', textResponse);
+        throw new Error('Server returned non-JSON response. Check server logs.');
+      }
+
+      const data = await response.json();
+      console.log('Response data:', data);
+
+      if (data.success) {
+        handleAuthSuccess(data, true);
+      } else {
+        if (data.errors && Array.isArray(data.errors)) {
+          setMessage({ type: 'error', text: data.errors.join(', ') });
+        } else {
+          setMessage({ type: 'error', text: data.message || 'Signup failed' });
+        }
+      }
+    } catch (error) {
+      console.error('Signup error:', error);
+      
+      // More specific error messages
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        setMessage({ type: 'error', text: 'Cannot connect to server. Please check if the server is running.' });
+      } else if (error.message.includes('JSON')) {
+        setMessage({ type: 'error', text: 'Server error. Please check server logs and try again.' });
+      } else {
+        setMessage({ type: 'error', text: error.message || 'Network error. Please try again.' });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Clear message when switching between forms
+  const switchPage = (page) => {
+    setCurrentPage(page);
+    setMessage({ type: '', text: '' });
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="flex bg-gray-100 rounded-lg p-1 mb-8">
+          <button
+            onClick={() => switchPage('signin')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              currentPage === 'signin'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Sign In
+          </button>
+          <button
+            onClick={() => switchPage('signup')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              currentPage === 'signup'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            Sign Up
+          </button>
         </div>
 
-        {/* Login Form */}
-        <div className="bg-slate-800/60 backdrop-blur-xl rounded-2xl p-8 border border-slate-700/50 shadow-2xl">
-          <div className="flex items-center justify-center mb-6">
-            <Shield className="w-6 h-6 text-blue-400 mr-2" />
-            <span className="text-lg font-semibold text-white">Secure Login</span>
+        {/* Message Display */}
+        {message.text && (
+          <div className={`mb-4 p-3 rounded-lg text-sm ${
+            message.type === 'success' 
+              ? 'bg-green-100 text-green-700 border border-green-200' 
+              : 'bg-red-100 text-red-700 border border-red-200'
+          }`}>
+            {message.text}
           </div>
+        )}
 
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  placeholder="Enter your email"
-                  required
-                />
+        {/* Sign In Form */}
+        {currentPage === 'signin' && (
+          <div className="bg-white rounded-2xl shadow-xl p-8">
+            <div className="text-center mb-8">
+              <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
+              <p className="text-gray-600 mt-2">Sign in to your account</p>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type="email"
+                    value={signInData.email}
+                    onChange={(e) => setSignInData({...signInData, email: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Enter your email"
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* Password Field */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-12 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  placeholder="Enter your password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={signInData.password}
+                    onChange={(e) => setSignInData({...signInData, password: e.target.value})}
+                    className="w-full pl-10 pr-12 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Enter your password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* Remember Me & Forgot Password */}
-            <div className="flex items-center justify-between text-sm">
-              <label className="flex items-center text-slate-300">
-                <input type="checkbox" className="mr-2 rounded border-slate-600 bg-slate-700" />
-                Remember me
-              </label>
-              <a href="#" className="text-purple-400 hover:text-purple-300 transition-colors">
-                Forgot password?
-              </a>
-            </div>
-
-            {/* Login Button */}
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className="w-full py-4 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-xl font-semibold hover:from-pink-700 hover:to-purple-700 transform hover:scale-[1.02] transition-all duration-200 flex items-center justify-center group"
-            >
-              <span>Sign In</span>
-              <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="my-6 flex items-center">
-            <div className="flex-1 border-t border-slate-600"></div>
-            <span className="px-4 text-slate-400 text-sm">or</span>
-            <div className="flex-1 border-t border-slate-600"></div>
-          </div>
-
-          {/* Sign Up Link */}
-          <div className="text-center">
-            <p className="text-slate-400">
-              Don't have an account?{' '}
               <button
-                onClick={() => setCurrentPage('signup')}
-                className="text-purple-400 hover:text-purple-300 font-semibold transition-colors"
+                type="button"
+                onClick={handleSignIn}
+                disabled={isLoading || !signInData.email || !signInData.password}
+                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Create one now
+                {isLoading ? 'Signing In...' : 'Sign In'}
               </button>
-            </p>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Sign Up Form */}
+        {currentPage === 'signup' && (
+          <div className="bg-white rounded-2xl shadow-xl p-8">
+            <div className="text-center mb-8">
+              <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
+              <p className="text-gray-600 mt-2">Join us today</p>
+            </div>
+
+            <div className="space-y-6">
+              {/* Profile Image Upload */}
+              <div className="flex flex-col items-center">
+                <div className="relative">
+                  {imagePreview ? (
+                    <div className="relative">
+                      <img
+                        src={imagePreview}
+                        alt="Profile preview"
+                        className="w-20 h-20 rounded-full object-cover border-4 border-gray-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={removeImage}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-20 h-20 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center">
+                      <Upload className="h-8 w-8 text-gray-400" />
+                    </div>
+                  )}
+                </div>
+                <label className="mt-2 cursor-pointer text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors">
+                  Upload Profile Picture
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Username
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                    <input
+                      type="text"
+                      value={signUpData.username}
+                      onChange={(e) => setSignUpData({...signUpData, username: e.target.value})}
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                      placeholder="Username"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Age
+                  </label>
+                  <input
+                    type="number"
+                    min="13"
+                    max="120"
+                    value={signUpData.age}
+                    onChange={(e) => setSignUpData({...signUpData, age: e.target.value})}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Age"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type="email"
+                    value={signUpData.email}
+                    onChange={(e) => setSignUpData({...signUpData, email: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Enter your email"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Gender
+                </label>
+                <select
+                  value={signUpData.gender}
+                  onChange={(e) => setSignUpData({...signUpData, gender: e.target.value})}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                  required
+                >
+                  <option value="">Select Gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                  <option value="prefer-not-to-say">Prefer not to say</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={signUpData.password}
+                    onChange={(e) => setSignUpData({...signUpData, password: e.target.value})}
+                    className="w-full pl-10 pr-12 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Create password (min 6 characters)"
+                    required
+                    minLength="6"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={signUpData.confirmPassword}
+                    onChange={(e) => setSignUpData({...signUpData, confirmPassword: e.target.value})}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                    placeholder="Confirm password"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSignUp}
+                disabled={isLoading || !signUpData.username || !signUpData.email || !signUpData.password || !signUpData.confirmPassword || !signUpData.gender || !signUpData.age}
+                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? 'Creating Account...' : 'Create Account'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
-
-  const SignupPage = () => (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 flex items-center justify-center px-6 relative overflow-hidden">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-        <div className="absolute top-3/4 right-3/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-2000"></div>
-      </div>
-
-      <div className="relative z-10 w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full mb-4 animate-bounce">
-            <Sparkles className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-2">
-            Couple<span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-purple-500">Crypt</span>
-          </h1>
-          <p className="text-slate-400">Create your secure couple space</p>
-        </div>
-
-        {/* Signup Form */}
-        <div className="bg-slate-800/60 backdrop-blur-xl rounded-2xl p-8 border border-slate-700/50 shadow-2xl">
-          <div className="flex items-center justify-center mb-6">
-            <Users className="w-6 h-6 text-blue-400 mr-2" />
-            <span className="text-lg font-semibold text-white">Join CoupleCrypt</span>
-          </div>
-
-          <div className="space-y-6">
-            {/* Email Field */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Your Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                  placeholder="your@email.com"
-                  required
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-12 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  placeholder="Create a strong password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Confirm Password Field */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">Confirm Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type={showConfirmPassword ? "text" : "password"}
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  className="w-full pl-12 pr-12 py-4 bg-slate-700/50 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  placeholder="Confirm your password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
-                >
-                  {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Terms Agreement */}
-            <div className="flex items-start space-x-3">
-              <input
-                type="checkbox"
-                id="terms"
-                className="mt-1 rounded border-slate-600 bg-slate-700"
-                required
-              />
-              <label htmlFor="terms" className="text-sm text-slate-300 leading-relaxed">
-                I agree to the{' '}
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">
-                  Terms of Service
-                </a>{' '}
-                and{' '}
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">
-                  Privacy Policy
-                </a>
-              </label>
-            </div>
-
-            {/* Signup Button */}
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className="w-full py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-purple-700 transform hover:scale-[1.02] transition-all duration-200 flex items-center justify-center group"
-            >
-              <span>Create Account</span>
-              <Sparkles className="w-5 h-5 ml-2 group-hover:rotate-12 transition-transform" />
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="my-6 flex items-center">
-            <div className="flex-1 border-t border-slate-600"></div>
-            <span className="px-4 text-slate-400 text-sm">or</span>
-            <div className="flex-1 border-t border-slate-600"></div>
-          </div>
-
-          {/* Login Link */}
-          <div className="text-center">
-            <p className="text-slate-400">
-              Already have an account?{' '}
-              <button
-                onClick={() => setCurrentPage('login')}
-                className="text-blue-400 hover:text-blue-300 font-semibold transition-colors"
-              >
-                Sign in here
-              </button>
-            </p>
-          </div>
-        </div>
-
-        {/* Security Note */}
-        <div className="mt-6 text-center">
-          <div className="inline-flex items-center px-4 py-2 bg-slate-800/40 rounded-full border border-slate-700/50">
-            <Shield className="w-4 h-4 text-green-400 mr-2" />
-            <span className="text-sm text-slate-300">End-to-end encrypted</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  return currentPage === 'login' ? <LoginPage /> : <SignupPage />;
 };
 
 export default AuthPage;

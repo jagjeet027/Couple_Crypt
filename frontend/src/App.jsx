@@ -1,9 +1,7 @@
-import React from 'react';    
-import { useState } from 'react'
+import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import PrivacyChatApp from './components/PrivacyChatApp.jsx'
 import AuthPage from './context/AuthPage.jsx'
-import HomePage from './components/HomePage.jsx'
 import SecureRoomPortal from './components/SecureRoomPortal.jsx'
 
 function App() {
@@ -11,7 +9,8 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<PrivacyChatApp />} />
-        <Route path="/login" element={<AuthPage initialPage="login" />} />
+        <Route path="/auth" element={<AuthPage initialPage="signin" />} />
+        <Route path="/login" element={<AuthPage initialPage="signin" />} />
         <Route path="/signup" element={<AuthPage initialPage="signup" />} />
         <Route path="/secure-room" element={<SecureRoomPortal />} />
         <Route path="/chat" element={<PrivacyChatApp />} />

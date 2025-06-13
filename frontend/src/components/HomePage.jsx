@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Lock, Users, Star, ArrowRight, Play, Heart, MessageCircle, Eye, Code, Zap, Wifi, Terminal } from 'lucide-react';
+import Header from './Header';
 
-// HomePage Component
 const HomePage = ({ onNavigateToSecureRoom }) => {
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -138,31 +138,10 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
     console.log('Starting romantic demonstration...');
   };
 
+
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">
-      {/* Header */}
-      <header className="relative z-20 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <Heart className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-white font-mono">LoveVault</span>
-          </div>
-          
-          <nav className="hidden md:flex items-center space-x-8">
-            <a href="#" className="text-gray-300 hover:text-pink-400 transition-colors font-mono">FEATURES</a>
-            <a href="#" className="text-gray-300 hover:text-pink-400 transition-colors font-mono">SECURITY</a>
-            <a href="#" className="text-gray-300 hover:text-pink-400 transition-colors font-mono">STORIES</a>
-            <button 
-              onClick={handleGetStarted}
-              className="px-6 py-3 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold hover:from-pink-700 hover:to-purple-700 transition-all"
-            >
-              GET STARTED
-            </button>
-          </nav>
-        </div>
-      </header>
+      <Header onGetStarted={handleGetStarted} />
 
       <div className="fixed inset-0 opacity-20">
         <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-purple-900"></div>
@@ -236,12 +215,9 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
                 </div>
               </div>
             </div>
-
-            {/* Right Mobile Mockup with Slides */}
             <div className="flex justify-center lg:justify-end">
               <div className="relative">
-                {/* Mobile Frame */}
-                <div className="w-80 h-[600px] bg-gradient-to-br from-gray-900 to-black rounded-[3rem] p-4 border-4 border-gray-700 shadow-2xl">
+                <div className="w-80 h-[580px] bg-gradient-to-br from-gray-900 to-black rounded-[3rem] p-4 border-4 border-gray-700 shadow-2xl">
                   <div className="w-full h-full bg-black rounded-[2.5rem] overflow-hidden relative">
                     {/* Status Bar */}
                     <div className="flex justify-between items-center px-6 py-3 bg-gradient-to-r from-gray-900 to-gray-800">
@@ -295,8 +271,6 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
                         </div>
                       ))}
                     </div>
-
-                    {/* Slide Indicators */}
                     <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex space-x-2">
                       {mobileSlides.map((_, index) => (
                         <button
@@ -328,37 +302,41 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
           </div>
         </div>
       </section>
-
-      {/* Features Section */}
-      <section className="relative z-10 py-20 px-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-5xl font-bold text-white mb-6 font-mono">
-              &lt;<span className="text-pink-500">COUPLE</span>_FEATURES/&gt;
-            </h2>
-            <p className="text-xl text-gray-400 max-w-3xl mx-auto">
-              <span className="text-purple-400 font-mono">/* </span>
-              Every feature designed for couples who value privacy and adventure.
-              <span className="text-purple-400 font-mono"> */</span>
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {features.map((feature, index) => (
-              <div key={index} className="group p-8 rounded-xl bg-gradient-to-br from-gray-900/50 to-purple-900/20 border border-pink-500/20 hover:border-pink-500/50 transition-all hover:scale-105 transform duration-300 backdrop-blur-sm">
-                <div className="mb-6 group-hover:animate-pulse">{feature.icon}</div>
-                <h3 className="text-xl font-bold text-white mb-4 font-mono">{feature.title}</h3>
-                <p className="text-gray-400 leading-relaxed mb-4">{feature.description}</p>
-                <div className="text-xs text-purple-400 font-mono opacity-75 border-t border-gray-800 pt-4">
-                  {feature.techSpecs}
-                </div>
+      <section className="relative z-10 py-16 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto">
+               <div className="text-center mb-12 sm:mb-16">
+                    <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-3 font-mono leading-tight">&lt;<span className="text-pink-500">COUPLE</span>_FEATURES/&gt;
+                    </h2>
+                    <p className="text-base sm:text-lg md:text-xl text-gray-400 max-w-2xl mx-auto px-2 sm:px-4">
+                    <span className="text-purple-400 font-mono">/* </span>
+                    Every feature designed for couples who value privacy and adventure.
+                    <span className="text-purple-400 font-mono"> */</span>
+                    </p>
               </div>
-            ))}
+
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+      {features.map((feature, index) => (
+        <div
+          key={index}
+          className="group p-6 sm:p-8 rounded-2xl bg-gradient-to-br from-gray-900/60 to-purple-900/30 border border-pink-500/20 hover:border-pink-500/50 transition-all hover:scale-[1.03] transform duration-300 backdrop-blur-sm shadow-lg"
+        >
+          <div className="mb-5 sm:mb-6 group-hover:animate-pulse text-pink-400">
+            {feature.icon}
+          </div>
+          <h3 className="text-lg sm:text-xl font-bold text-white mb-3 sm:mb-4 font-mono">
+            {feature.title}
+          </h3>
+          <p className="text-sm sm:text-base text-gray-300 leading-relaxed mb-3 sm:mb-4">
+            {feature.description}
+          </p>
+          <div className="text-xs sm:text-sm text-purple-400 font-mono opacity-80 border-t border-gray-800 pt-3">
+            {feature.techSpecs}
           </div>
         </div>
-      </section>
-
-      {/* Security Section */}
+      ))}
+    </div>
+  </div>
+</section>
       <section className="relative z-10 py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">

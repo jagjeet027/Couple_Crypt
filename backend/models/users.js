@@ -1,75 +1,57 @@
- import mongoose from "mongoose"
+import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
-  id: {
-    type: 'string',
-    format: 'uuid',
-    description: 'Unique identifier for the user',
-  },
   username: {
-    type: 'string',
-    minLength: 3,
-    maxLength: 30,
-    description: 'Username of the user',
+    type: String,
+    required: [true, 'Username is required'],
+    unique: true,
+    trim: true,
+    minlength: [3, 'Username must be at least 3 characters long'],
+    maxlength: [20, 'Username cannot exceed 20 characters']
   },
   email: {
-    type: 'string',
-    format: 'email',
-    description: 'Email address of the user',
+    type: String,
+    required: [true, 'Email is required'],
+    unique: true,
+    trim: true,
+    lowercase: true,
+    match: [
+      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      'Please enter a valid email'
+    ]
   },
   password: {
-    type: 'string',
-    minLength: 8,
-    description: 'Password for the user account',
+    type: String,
+    required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters long']
   },
-  createdAt: {
-    type: 'string',
-    format: 'date-time',
-    description: 'Timestamp when the user was created',
+  gender: {
+    type: String,
+    required: [true, 'Gender is required'],
+    enum: ['male', 'female', 'other']
   },
-  updatedAt: {
-    type: 'string',
-    format: 'date-time',
-    description: 'Timestamp when the user was last updated',
+  age: {
+    type: Number,
+    required: [true, 'Age is required'],
+    min: [13, 'Age must be at least 13'],
+    max: [120, 'Age cannot exceed 120']
   },
-  profilePicture: {
-    type: 'string',
-    format: 'uri',
-    description: 'URL of the user\'s profile picture',
-  },
-  bio: {
-    type: 'string',
-    maxLength: 500,
-    description: 'Short biography of the user',
+  profileImage: {
+    type: String,
+    default: null
   },
   isActive: {
-    type: 'boolean',
-    description: 'Indicates if the user account is active',
-  },
-  lastLogin: {
-    type: 'string',
-    format: 'date-time',
-    description: 'Timestamp of the user\'s last login',
-  },
-  preferences: {
-    type: 'object',
-    properties: {
-      theme: {
-        type: 'string',
-        enum: ['light', 'dark'],
-        description: 'User interface theme preference',
-      },
-      notifications: {
-        type: 'boolean',
-        description: 'Indicates if the user wants to receive notifications',
-      },
-    },
-    description: 'User-specific preferences for the application',
+    type: Boolean,
+    default: true
   }
-}
-)
-  
+}, {
+  timestamps: true
+});
 
-const User = mongoose.models.User || mongoose.model("User", userSchema);
+// Index for faster queries
+userSchema.index({ email: 1 });
+userSchema.index({ username: 1 });
 
-export { User };
+const User = mongoose.model('User', userSchema);
+
+export default User;

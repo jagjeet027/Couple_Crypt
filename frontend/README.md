@@ -40,8 +40,8 @@ export default defineConfig({
   ],
 })
 
-# Import Tailwind CSS
-@import "tailwindcss";
+# Import Tailwind CSS in index.css//
+@import "tailwindcss"; 
 
 # just start the react app
 npm run dev
