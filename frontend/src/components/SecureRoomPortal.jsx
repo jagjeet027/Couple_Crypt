@@ -134,19 +134,22 @@ class LoveRoomAPI {
     }
   }
 
-  // This method now correctly calls the new getRoomStatus endpoint
-  static async getRoomStatus(roomCode) {
-    if (!roomCode) {
-      throw new Error('Room code is required');
-    }
-
-    try {
-      const response = await this.apiCall(`/love-room/status/${roomCode.toUpperCase()}`);
-      return response;
-    } catch (error) {
-      throw error;
-    }
+  static async getRoomStatus(roomCode, userId = null) {
+  if (!roomCode) {
+    throw new Error('Room code is required');
   }
+
+  try {
+    const url = userId 
+      ? `/love-room/status/${roomCode.toUpperCase()}?userId=${userId}`
+      : `/love-room/status/${roomCode.toUpperCase()}`;
+    
+    const response = await this.apiCall(url);
+    return response;
+  } catch (error) {
+    throw error;
+  }
+}
 
   static createWebSocket(roomCode, options = {}) {
     const {
@@ -413,6 +416,9 @@ const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
   setConnectionStatus('connected');
   setConnectionMethod('polling');
   
+  // Track polling state separately from isWaitingForPartner
+  let shouldContinuePolling = true;
+  
   // Initialize or update local room data
   setLocalRooms(prev => {
     const currentRoom = prev[roomCode];
@@ -433,86 +439,148 @@ const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
     };
   });
 
-  
-    const pollForUpdates = async () => {
+  const pollForUpdates = async () => {
     try {
-      // Check local room first
-      const currentRoom = localRooms[roomCode];
-      
-      if (currentRoom) {
-        // If we have 2 users and we're waiting for partner
-        if (currentRoom.users.length >= 2 && isWaitingForPartner) {
-          const partnerId = currentRoom.users.find(id => id !== userSessionId);
-          if (partnerId) {
-            console.log('Partner found in local room:', partnerId);
-            handlePartnerJoined({
-              roomCode,
-              userId: partnerId,
-              partnerInfo: { name: 'Your Love', id: partnerId }
-            });
-            return; // Stop polling once partner is found
-          }
-        }
+      // Check if we should continue polling
+      if (!shouldContinuePolling) {
+        console.log('Polling stopped by flag');
+        return;
       }
-      
-      // If server is available, also try API
+
+      let partnerFound = false;
+
+      // Server check with timeout and retry logic
       if (serverAvailable) {
         try {
-          const response = await LoveRoomAPI.getRoomStatus(roomCode);
+          const response = await Promise.race([
+            LoveRoomAPI.getRoomStatus(roomCode, userSessionId),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('API timeout')), 3000)
+            )
+          ]);
           
-          if (response.success && response.data.userCount >= 2 && isWaitingForPartner) {
+          if (response.success && response.data.userCount >= 2) {
+            console.log('✅ Partner found via API');
+            partnerFound = true;
+            shouldContinuePolling = false; // Stop polling
+            
+            // Clear interval immediately
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            
             handlePartnerJoined({
               roomCode,
               partnerInfo: response.data.partner || { name: 'Your Love', id: 'partner' },
               roomData: response.data
             });
+            return;
           }
         } catch (apiError) {
-          console.log('API polling failed, using local only:', apiError.message);
+          console.log('API polling failed:', apiError.message);
           setServerAvailable(false);
+          
+          // Retry server connection after delay
+          setTimeout(() => {
+            console.log('Retrying server connection...');
+            setServerAvailable(true);
+          }, 30000);
         }
       }
+
+      // Check local rooms if API failed
+      if (!partnerFound) {
+        setLocalRooms(currentRooms => {
+          const currentRoom = currentRooms[roomCode];
+          
+          if (currentRoom && currentRoom.users.length >= 2 && shouldContinuePolling) {
+            const partnerId = currentRoom.users.find(id => id !== userSessionId);
+            if (partnerId) {
+              console.log('✅ Partner found in local room');
+              partnerFound = true;
+              shouldContinuePolling = false; // Stop polling
+              
+              // Clear interval immediately
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+              }
+              
+              // Immediate partner join
+              handlePartnerJoined({
+                roomCode,
+                userId: partnerId,
+                partnerInfo: { name: 'Your Love', id: partnerId }
+              });
+            }
+          }
+          
+          return currentRooms;
+        });
+      }
+      
     } catch (error) {
       console.log('Polling error:', error.message);
     }
   };
-  
-  // Start polling
+
+  // Clear existing interval properly
   if (pollIntervalRef.current) {
     clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = null;
   }
-  pollIntervalRef.current = setInterval(pollForUpdates, 1500); // Poll every 1.5 seconds
+
+  // Start polling every 1 second
+  pollIntervalRef.current = setInterval(pollForUpdates, 1000);
   
-  // Initial poll
-  setTimeout(pollForUpdates, 500);
+  // Immediate first poll
+  pollForUpdates();
+
+  // Return cleanup function
+  return () => {
+    shouldContinuePolling = false;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
 };
 
-  // Handle when partner joins the room
   const handlePartnerJoined = (data) => {
-    console.log('Partner joined:', data);
-    setIsWaitingForPartner(false);
-    
-    showNotification('💞 Your love has arrived • Connecting hearts...');
-    
-    const creatorRoomData = {
-      userRole: 'creator',
-      roomCode: generatedCode || data.roomCode,
-      partnerName: data.partnerInfo?.name || 'Your Love',
-      creatorId: userSessionId,
-      joinerId: data.userId || data.partnerInfo?.id,
-      roomId: generatedCode || data.roomCode,
-      timestamp: Date.now(),
-      partnerInfo: data.partnerInfo,
-      connectionMethod: connectionMethod
-    };
-    
-    setTimeout(() => {
-      showNotification('💖 Opening love chat • Your hearts are now connected');
-      setTimeout(() => {
-        transitionToChat(creatorRoomData);
-      }, 1500);
-    }, 2000);
+  console.log('🎉 Partner joined:', data);
+  
+  // Stop polling immediately
+  setIsWaitingForPartner(false);
+  
+  // Clear polling
+  if (pollIntervalRef.current) {
+    clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = null;
+  }
+  
+  showNotification('💞 Your love has arrived • Connecting hearts...');
+  
+  const creatorRoomData = {
+    userRole: 'creator',
+    roomCode: generatedCode || data.roomCode,
+    partnerName: data.partnerInfo?.name || 'Your Love',
+    creatorId: userSessionId,
+    joinerId: data.userId || data.partnerInfo?.id,
+    roomId: generatedCode || data.roomCode,
+    timestamp: Date.now(),
+    partnerInfo: data.partnerInfo,
+    connectionMethod: connectionMethod
   };
+  
+  // Faster transition
+  setTimeout(() => {
+    showNotification('💖 Opening love chat • Your hearts are now connected');
+    setTimeout(() => {
+      transitionToChat(creatorRoomData);
+    }, 1000);
+  }, 1000);
+};
 
   // Handle when room is ready for both users
   const handleRoomReady = (data) => {
@@ -703,7 +771,7 @@ const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
   }
 };
 
- const joinRoom = async () => {
+const joinRoom = async () => {
   if (joinCode.length < 14) {
     showNotification('💔 Invalid code format • Please enter complete code');
     return;
@@ -712,14 +780,34 @@ const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
   setIsLoading(true);
 
   try {
-    // Try API first
-    const joinResponse = await LoveRoomAPI.joinRoom(joinCode, userSessionId);
+    // FIXED: Try API first with timeout
+    const joinResponse = await Promise.race([
+      LoveRoomAPI.joinRoom(joinCode, userSessionId),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('API timeout')), 5000)
+      )
+    ]);
     
     if (joinResponse.success) {
       showNotification('💖 Love code accepted • Connecting hearts...');
       
-      // Initialize polling for API-based room
-      initializePolling(joinCode, 'joiner');
+      // FIXED: Immediate local update and broadcast
+      const updatedRoom = {
+        code: joinCode,
+        creator: joinResponse.data.creatorId || 'unknown',
+        users: [joinResponse.data.creatorId || 'unknown', userSessionId],
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        expiresAt: Date.now() + 600000
+      };
+      
+      setLocalRooms(prev => ({
+        ...prev,
+        [joinCode]: updatedRoom
+      }));
+      
+      // FIXED: Immediate broadcast to all tabs
+      broadcastRoomUpdate(joinCode, updatedRoom);
       
       const newRoomData = {
         userRole: 'joiner',
@@ -729,99 +817,78 @@ const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
         joinerId: userSessionId,
         roomId: joinResponse.data.roomId || joinCode,
         timestamp: Date.now(),
-        connectionMethod: 'polling'
+        connectionMethod: 'api'
       };
       
+      // FIXED: Reduced delay for faster transition
       setTimeout(() => {
         transitionToChat(newRoomData);
-      }, 2000);
+      }, 1000);
+      
     } else {
       throw new Error(joinResponse.message || 'Failed to join room');
     }
   } catch (error) {
     console.log('API join failed, using local validation:', error.message);
     setServerAvailable(false);
-    
-    // Local validation and joining
+
+    // FIXED: Better local validation
     const currentRoom = localRooms[joinCode];
     
-    // Check if room exists locally or if it's the generated code
     if (!currentRoom && joinCode !== generatedCode) {
       showNotification('💔 Invalid love code • Room not found');
       setIsLoading(false);
       return;
     }
 
-    // Check if trying to join own room
     if (codeCreatorId === userSessionId) {
       showNotification('🚫 Cannot join your own room • Share code with your love');
       setIsLoading(false);
       return;
     }
 
-    // Check expiry
-    if (codeExpiry && Date.now() >= codeExpiry) {
-      showNotification('⏰ Code expired • Ask for new code');
-      setIsLoading(false);
-      return;
-    }
-
-    if (currentRoom && currentRoom.expiresAt && Date.now() >= currentRoom.expiresAt) {
-      showNotification('⏰ Code expired • Ask for new code');
-      setIsLoading(false);
-      return;
-    }
-
     showNotification('💖 Love code accepted • Connecting hearts...');
     
-    // Add user to local room
-    setLocalRooms(prev => {
-      const room = prev[joinCode] || {
-        code: joinCode,
-        creator: codeCreatorId || 'unknown',
-        users: [],
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-        expiresAt: Date.now() + 600000
+    // FIXED: Immediate local room update
+    const updatedRoom = {
+      code: joinCode,
+      creator: codeCreatorId || 'unknown',
+      users: [codeCreatorId || 'unknown', userSessionId].filter(Boolean),
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+      expiresAt: Date.now() + 600000
+    };
+    
+    setLocalRooms(prev => ({
+      ...prev,
+      [joinCode]: updatedRoom
+    }));
+
+    // FIXED: Immediate broadcast
+    broadcastRoomUpdate(joinCode, updatedRoom);
+
+    // FIXED: Faster transition
+    setTimeout(() => {
+      const newRoomData = {
+        userRole: 'joiner',
+        roomCode: joinCode,
+        partnerName: 'Your Love',
+        creatorId: codeCreatorId,
+        joinerId: userSessionId,
+        roomId: joinCode,
+        timestamp: Date.now(),
+        connectionMethod: 'local'
       };
       
-      return {
-        ...prev,
-        [joinCode]: {
-          ...room,
-          users: [...room.users, userSessionId].filter((v, i, a) => a.indexOf(v) === i),
-          lastActivity: Date.now()
-        }
-      };
-    });
-    
-    // Initialize polling for local room
-    initializePolling(joinCode, 'joiner');
-    
-    // If the creator is waiting, notify them
-    if (isWaitingForPartner && codeCreatorId !== userSessionId) {
-      // Simulate partner joining for the creator
-      setTimeout(() => {
-        const newRoomData = {
-          userRole: 'joiner',
-          roomCode: joinCode,
-          partnerName: 'Your Love',
-          creatorId: codeCreatorId,
-          joinerId: userSessionId,
-          roomId: joinCode,
-          timestamp: Date.now(),
-          connectionMethod: 'polling'
-        };
-        
-        transitionToChat(newRoomData);
-      }, 2000);
-    }
+      transitionToChat(newRoomData);
+    }, 1000);
   } finally {
     setIsLoading(false);
   }
 };
+
+
 const broadcastRoomUpdate = (roomCode, updateData) => {
-  // Use localStorage events to sync across tabs
   const broadcastData = {
     type: 'room_update',
     roomCode,
@@ -829,40 +896,101 @@ const broadcastRoomUpdate = (roomCode, updateData) => {
     data: updateData
   };
   
+  // Method 1: localStorage
   localStorage.setItem('loveroom_broadcast', JSON.stringify(broadcastData));
+  
+  // Method 2: Custom event
+  window.dispatchEvent(new CustomEvent('loveroom-update', { 
+    detail: broadcastData 
+  }));
+  
+  // Method 3: BroadcastChannel (if supported)
+  if (typeof BroadcastChannel !== 'undefined') {
+    const channel = new BroadcastChannel('loveroom');
+    channel.postMessage(broadcastData);
+    channel.close();
+  }
+  
+  // Cleanup localStorage after 2 seconds
   setTimeout(() => {
     localStorage.removeItem('loveroom_broadcast');
-  }, 1000);
+  }, 2000);
 };
-// Add this useEffect to listen for broadcasts from other tabs
+
 useEffect(() => {
   const handleStorageChange = (e) => {
     if (e.key === 'loveroom_broadcast' && e.newValue) {
       try {
         const broadcastData = JSON.parse(e.newValue);
-        if (broadcastData.type === 'room_update') {
-          // Update local room data
-          setLocalRooms(prev => ({
-            ...prev,
-            [broadcastData.roomCode]: {
-              ...prev[broadcastData.roomCode],
-              ...broadcastData.data,
-              lastActivity: Date.now()
-            }
-          }));
-        }
+        handleBroadcastUpdate(broadcastData);
       } catch (error) {
         console.log('Broadcast parse error:', error);
       }
     }
   };
   
+  const handleCustomEvent = (e) => {
+    handleBroadcastUpdate(e.detail);
+  };
+  
+  const handleBroadcastChannel = (e) => {
+    handleBroadcastUpdate(e.data);
+  };
+  
+   const handleBroadcastUpdate = (broadcastData) => {
+    if (broadcastData.type === 'room_update') {
+      setLocalRooms(prev => {
+        const updatedRooms = {
+          ...prev,
+          [broadcastData.roomCode]: {
+            ...prev[broadcastData.roomCode],
+            ...broadcastData.data,
+            lastActivity: Date.now()
+          }
+        };
+        
+        // Check if this is the room we're waiting for
+        const room = updatedRooms[broadcastData.roomCode];
+        if (room && 
+            room.users.length >= 2 && 
+            generatedCode === broadcastData.roomCode && 
+            codeCreatorId === userSessionId &&
+            isWaitingForPartner) { // Only check if we're actually waiting
+          
+          const partnerId = room.users.find(id => id !== userSessionId);
+          if (partnerId) {
+            // Immediate response
+            handlePartnerJoined({
+              roomCode: broadcastData.roomCode,
+              userId: partnerId,
+              partnerInfo: { name: 'Your Love', id: partnerId }
+            });
+          }
+        }
+        
+        return updatedRooms;
+      });
+    }
+  };
+  
+  // Add all event listeners
   window.addEventListener('storage', handleStorageChange);
+  window.addEventListener('loveroom-update', handleCustomEvent);
+  
+  let broadcastChannel;
+  if (typeof BroadcastChannel !== 'undefined') {
+    broadcastChannel = new BroadcastChannel('loveroom');
+    broadcastChannel.addEventListener('message', handleBroadcastChannel);
+  }
   
   return () => {
     window.removeEventListener('storage', handleStorageChange);
+    window.removeEventListener('loveroom-update', handleCustomEvent);
+    if (broadcastChannel) {
+      broadcastChannel.close();
+    }
   };
-}, []);
+}, [isWaitingForPartner, codeCreatorId, userSessionId, generatedCode]);
 
   const handleJoinCodeChange = (e) => {
     let value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');

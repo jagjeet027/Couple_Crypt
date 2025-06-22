@@ -216,8 +216,6 @@ const PrivacyChatApp = () => {
           userData={getUserData()}
         />
       )}
-
-      {/* NEW: Chat View */}
       {currentView === 'chat' && isAuthenticated && chatRoomData && (
         <LoveChat 
           roomData={chatRoomData}
