@@ -22,10 +22,7 @@ const app = express();
 const server = http.createServer(app);
 
 const allowedOrigins = [
-  "http://localhost:5174",
-  "http://localhost:5173", // In case you switch ports
-  "http://localhost:3000",
-  "http://localhost:3001",
+"https://lovevault.onrender.com/",
   process.env.CLIENT_URL
 ].filter(Boolean);
 
