@@ -1,0 +1,15 @@
+version: '3'
+services:
+  backend:
+    build: .
+    ports:
+      - "2004:2004"
+    # depends_on:
+    #   - mongo
+    # environment:
+    #   - MONGO_URI=mongodb://mongo:27017/loveVoucher
+
+  # mongo:
+  #   image: mongo
+  #   ports:
+  #     - "27017:27017"

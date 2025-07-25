@@ -1,0 +1,10 @@
+FROM node:latest
+RUN npm install -g nodemon
+WORKDIR /app
+# Set the working directory to /app
+COPY . .
+RUN npm install
+EXPOSE 2004
+CMD ["npm" ,"run", "dev"]
+# Start the application using nodemon for development\
+

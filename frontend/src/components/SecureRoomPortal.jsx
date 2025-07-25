@@ -1,1240 +1,662 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Heart, 
+  Shield, 
+  Users, 
+  Copy, 
+  Check, 
+  ArrowRight, 
+  Home, 
+  LogOut, 
+  User,
+  Lock,
+  Plus,
+  Key,
+  Clock
+} from 'lucide-react';
 
-// Since we can't import from files, I'll include a simplified version of the API class
-const API_BASE_URL = 'http://localhost:2004/api';
-const WS_BASE_URL = 'ws://localhost:2004';
+const SecureRoomPortal = ({ 
+  onNavigateHome, 
+  onJoinChat, 
+  userEmail, 
+  onLogout, 
+  userData 
+}) => {
+  // State Management
+  const [activeTab, setActiveTab] = useState('create');
+  const [roomCode, setRoomCode] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [waitingForJoiner, setWaitingForJoiner] = useState(false);
+  const [roomStatus, setRoomStatus] = useState(null);
+  const [hasGeneratedCode, setHasGeneratedCode] = useState(false);
+  const [showCodePopup, setShowCodePopup] = useState(false);
+  const [popupTimer, setPopupTimer] = useState(15);
+  const [timeRemaining, setTimeRemaining] = useState(null);
 
-class LoveRoomAPI {
-  static async checkServerHealth() {
+  // Configuration
+  const API_BASE_URL = 'http://localhost:2004/api';
+  const CODE_EXPIRY_TIME = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+  // Initialize component
+  useEffect(() => {
+    checkForActiveRoom();
+  }, []);
+
+  // Poll room status when waiting for joiner
+  useEffect(() => {
+    if (!waitingForJoiner || !roomCode) return;
+
+    const interval = setInterval(() => {
+      checkRoomStatus(roomCode);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [waitingForJoiner, roomCode]);
+
+  // Check if user already has an active room
+  const checkForActiveRoom = () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/health`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      return response.ok;
+      const activeRoomData = localStorage.getItem('activeRoomData');
+      if (activeRoomData) {
+        const roomData = JSON.parse(activeRoomData);
+        console.log('User has active room, redirecting to chat');
+        onJoinChat(roomData);
+      }
     } catch (error) {
-      console.warn('Server health check failed:', error.message);
-      return false;
+      console.error('Error checking active room:', error);
+      localStorage.removeItem('activeRoomData');
     }
-  }
+  };
 
-  static async checkWebSocketHealth() {
-    return new Promise((resolve) => {
-      try {
-        const testWs = new WebSocket(`${WS_BASE_URL}/health`);
-        const timeout = setTimeout(() => {
-          testWs.close();
-          resolve(false);
-        }, 3000);
-        
-        testWs.onopen = () => {
-          clearTimeout(timeout);
-          testWs.close();
-          resolve(true);
-        };
-        
-        testWs.onerror = () => {
-          clearTimeout(timeout);
-          resolve(false);
-        };
-      } catch (error) {
-        resolve(false);
-      }
-    });
-  }
-
-  static async apiCall(endpoint, options = {}) {
+  // Check room status for waiting creator
+  const checkRoomStatus = async (code) => {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
-        signal: controller.signal,
-        ...options,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.message || errorMessage;
-        } catch (parseError) {
-          console.warn('Could not parse error response:', parseError);
+      const response = await fetch(
+        `${API_BASE_URL}/love-room/rooms/status/${code}?userId=${userData.id || userData.email}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
         }
+      );
 
-        switch (response.status) {
-          case 404:
-            throw new Error('Room not found');
-          case 500:
-            throw new Error('Internal server error');
-          case 503:
-            throw new Error('Service unavailable');
-          default:
-            throw new Error(errorMessage);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          const data = result.data;
+          setRoomStatus({
+            memberCount: data.joiner ? 2 : 1,
+            status: data.status,
+            timeRemaining: data.timeRemaining
+          });
+          
+          setTimeRemaining(data.timeRemaining);
+          
+          // If room has joiner, creator can join
+          if (data.joiner && data.status === 'connected') {
+            setSuccess('Partner joined! Entering the love room...');
+            setTimeout(() => {
+              handleJoinRoom(code, true);
+            }, 1500);
+          }
         }
       }
+    } catch (error) {
+      console.error('Error checking room status:', error);
+    }
+  };
 
+  // Validate room code
+  const validateCode = async (code) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/love-room/validate/${code}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
       return await response.json();
     } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error('Request timed out');
-      }
-      throw error;
+      console.error('Error validating code:', error);
+      return { success: false, message: 'Failed to validate code' };
     }
-  }
+  };
 
-  static async generateCode(userId) {
-    try {
-      const response = await this.apiCall('/love-room/generate', {
-        method: 'POST',
-        body: JSON.stringify({ userId }),
-      });
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  static async joinRoom(code, userId) {
-    if (!code || !userId) {
-      throw new Error('Room code and user ID are required');
-    }
-
-    try {
-      const response = await this.apiCall('/love-room/join', {
-        method: 'POST',
-        body: JSON.stringify({ code: code.toUpperCase(), userId }),
-      });
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  }
-
- static async resetCode(code, userId) {
-    if (!code || !userId) {
-      throw new Error('Room code and user ID are required');
-    }
-
-    try {
-      const response = await this.apiCall(`/love-room/reset/${code.toUpperCase()}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ userId }),
-      });
-      return response;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  static async getRoomStatus(roomCode, userId = null) {
-  if (!roomCode) {
-    throw new Error('Room code is required');
-  }
-
-  try {
-    const url = userId 
-      ? `/love-room/status/${roomCode.toUpperCase()}?userId=${userId}`
-      : `/love-room/status/${roomCode.toUpperCase()}`;
-    
-    const response = await this.apiCall(url);
-    return response;
-  } catch (error) {
-    throw error;
-  }
-}
-
-  static createWebSocket(roomCode, options = {}) {
-    const {
-      maxRetries = 2,
-      retryDelay = 2000,
-      onConnect = () => {},
-      onDisconnect = () => {},
-      onError = () => {},
-      onMessage = () => {},
-      onFallback = () => {}
-    } = options;
-
-    let retryCount = 0;
-    let ws = null;
-    let isIntentionallyClosed = false;
-
-    const connect = async () => {
-      const wsHealthy = await this.checkWebSocketHealth();
-      
-      if (!wsHealthy) {
-        console.log('WebSocket server not available, triggering fallback immediately');
-        onFallback('WebSocket server unavailable');
-        return;
-      }
-
-      const wsUrl = `${WS_BASE_URL}/love-room/${roomCode.toUpperCase()}`;
-      console.log(`Attempting WebSocket connection to: ${wsUrl}`);
-      
-      try {
-        ws = new WebSocket(wsUrl);
-
-        const connectionTimeout = setTimeout(() => {
-          if (ws && ws.readyState === WebSocket.CONNECTING) {
-            ws.close();
-            handleConnectionFailure('Connection timeout');
-          }
-        }, 5000);
-
-        ws.onopen = (event) => {
-          clearTimeout(connectionTimeout);
-          console.log('WebSocket connected successfully');
-          retryCount = 0;
-          onConnect(event);
-        };
-
-        ws.onclose = (event) => {
-          clearTimeout(connectionTimeout);
-          console.log('WebSocket disconnected:', event.code, event.reason);
-          onDisconnect(event);
-
-          if (!isIntentionallyClosed && event.code !== 1000 && retryCount < maxRetries) {
-            retryCount++;
-            setTimeout(connect, retryDelay);
-          } else if (!isIntentionallyClosed && retryCount >= maxRetries) {
-            onFallback('Max retry attempts reached');
-          }
-        };
-
-        ws.onerror = (error) => {
-          clearTimeout(connectionTimeout);
-          console.error('WebSocket error:', error);
-          onError(error);
-          handleConnectionFailure('WebSocket error occurred');
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            onMessage(data);
-          } catch (parseError) {
-            onMessage(event.data);
-          }
-        };
-
-      } catch (error) {
-        console.error('Failed to create WebSocket:', error);
-        handleConnectionFailure('Failed to create WebSocket');
-      }
-    };
-
-    const handleConnectionFailure = (reason) => {
-      if (retryCount < maxRetries) {
-        retryCount++;
-        setTimeout(connect, retryDelay);
-      } else {
-        onFallback(reason);
-      }
-    };
-
-    connect();
-
-    return {
-      get socket() { return ws; },
-      get readyState() { return ws ? ws.readyState : WebSocket.CLOSED; },
-      send: (data) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(typeof data === 'string' ? data : JSON.stringify(data));
-          return true;
-        }
-        return false;
-      },
-      close: () => {
-        isIntentionallyClosed = true;
-        if (ws) {
-          ws.close(1000, 'Manual close');
-        }
-      },
-      reconnect: () => {
-        isIntentionallyClosed = false;
-        if (ws) {
-          ws.close();
-        }
-        retryCount = 0;
-        connect();
-      },
-      isConnected: () => {
-        return ws && ws.readyState === WebSocket.OPEN;
-      }
-    };
-  }
-
-  static generateLocalCode() {
+  // Generate 6-character room code
+  const generateRoomCode = () => {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let code = '';
-    for (let i = 0; i < 12; i++) {
-      code += characters.charAt(Math.floor(Math.random() * characters.length));
-      if (i === 3 || i === 7) code += '-';
+    let result = '';
+    for (let i = 0; i < 6; i++) {
+      result += characters.charAt(Math.floor(Math.random() * characters.length));
     }
-    return code;
-  }
-}
-
-const SecureRoomPortal = ({ onNavigateHome, onJoinChat, userEmail }) => {
-  const [generatedCode, setGeneratedCode] = useState('');
-  const [joinCode, setJoinCode] = useState('');
-  const [notifications, setNotifications] = useState([]);
-  const [isGlitching, setIsGlitching] = useState(false);
-  const [userSessionId, setUserSessionId] = useState('');
-  const [codeCreatorId, setCodeCreatorId] = useState('');
-  const [isCodeActive, setIsCodeActive] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [roomCreated, setRoomCreated] = useState(false);
-  const [codeExpiry, setCodeExpiry] = useState(null);
-  const [roomData, setRoomData] = useState(null);
-  
-  // New states for real-time communication
-  const [isWaitingForPartner, setIsWaitingForPartner] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
-  const [connectionMethod, setConnectionMethod] = useState('none');
-  const wsRef = useRef(null);
-  const pollIntervalRef = useRef(null);
-  const heartbeatIntervalRef = useRef(null);
-  const connectionAttempts = useRef(0);
-  const maxConnectionAttempts = 3;
-
-  // In-memory room storage for local functionality
-  const [localRooms, setLocalRooms] = useState({});
-  const [serverAvailable, setServerAvailable] = useState(true);
-
-  // Enhanced session ID generation
-  useEffect(() => {
-    const userIdentifier = userEmail || 'anonymous';
-    const timestamp = Date.now();
-    const randomPart = Math.random().toString(36).substring(2, 11);
-    const browserFingerprint = navigator.userAgent.substring(0, 10).replace(/[^a-zA-Z0-9]/g, '');
-    
-    const sessionId = `${userIdentifier.replace(/[^a-zA-Z0-9]/g, '')}_${browserFingerprint}_${randomPart}_${timestamp}`;
-    setUserSessionId(sessionId);
-    
-    console.log('Generated Session ID:', sessionId);
-  }, [userEmail]);
-
-  // Enhanced WebSocket Connection Management with better fallback
-  const initializeWebSocket = (roomCode, role) => {
-    if (wsRef.current && wsRef.current.isConnected()) {
-      return;
-    }
-
-    console.log(`Initializing WebSocket for room: ${roomCode}, role: ${role}`);
-
-    wsRef.current = LoveRoomAPI.createWebSocket(roomCode, {
-      maxRetries: 2,
-      retryDelay: 2000,
-      onConnect: (event) => {
-        console.log('WebSocket connected successfully');
-        setConnectionStatus('connected');
-        setConnectionMethod('websocket');
-        connectionAttempts.current = 0;
-        
-        if (wsRef.current) {
-          wsRef.current.send({
-            type: 'join_room',
-            roomCode,
-            userId: userSessionId,
-            role,
-            timestamp: Date.now()
-          });
-        }
-        
-        // Start heartbeat
-        if (heartbeatIntervalRef.current) {
-          clearInterval(heartbeatIntervalRef.current);
-        }
-        heartbeatIntervalRef.current = setInterval(() => {
-          if (wsRef.current && wsRef.current.isConnected()) {
-            wsRef.current.send({ type: 'heartbeat' });
-          }
-        }, 30000);
-      },
-      onDisconnect: (event) => {
-        console.log('WebSocket disconnected');
-        setConnectionStatus('disconnected');
-        if (heartbeatIntervalRef.current) {
-          clearInterval(heartbeatIntervalRef.current);
-        }
-      },
-      onError: (error) => {
-        console.error('WebSocket error:', error);
-        setConnectionStatus('error');
-        showNotification('🔌 Connection issue detected');
-      },
-      onMessage: (message) => {
-        handleWebSocketMessage(message);
-      },
-      onFallback: (reason) => {
-        console.log('WebSocket fallback triggered:', reason);
-        showNotification('🔌 Using backup connection • Room still works!');
-        setConnectionMethod('polling');
-        initializePolling(roomCode, role);
-      }
-    });
+    return result;
   };
 
-  // Handle WebSocket messages
-  const handleWebSocketMessage = (message) => {
-    console.log('Received WebSocket message:', message);
-    
-    switch (message.type) {
-      case 'user_joined':
-        if (message.userId !== userSessionId) {
-          handlePartnerJoined(message);
-        }
-        break;
-      
-      case 'room_ready':
-        handleRoomReady(message);
-        break;
-      
-      case 'partner_connected':
-        handlePartnerConnected(message);
-        break;
-      
-      case 'error':
-        showNotification(`❌ ${message.message}`);
-        break;
-      
-      default:
-        console.log('Unknown message type:', message.type);
-    }
-  };
+  // Create new room
+  const createRoom = async () => {
+    if (!userData?.email || hasGeneratedCode) return;
 
- const initializePolling = (roomCode, role) => {
-  console.log('Initializing polling for room:', roomCode, 'Role:', role);
-  setConnectionStatus('connected');
-  setConnectionMethod('polling');
-  
-  // Track polling state separately from isWaitingForPartner
-  let shouldContinuePolling = true;
-  
-  // Initialize or update local room data
-  setLocalRooms(prev => {
-    const currentRoom = prev[roomCode];
-    const newUsers = currentRoom ? 
-      [...currentRoom.users, userSessionId].filter((v, i, a) => a.indexOf(v) === i) : 
-      [userSessionId];
-    
-    return {
-      ...prev,
-      [roomCode]: {
-        code: roomCode,
-        creator: role === 'creator' ? userSessionId : (currentRoom?.creator || 'unknown'),
-        users: newUsers,
-        createdAt: currentRoom?.createdAt || Date.now(),
-        lastActivity: Date.now(),
-        expiresAt: currentRoom?.expiresAt || (Date.now() + 600000)
-      }
-    };
-  });
-
-  const pollForUpdates = async () => {
-    try {
-      // Check if we should continue polling
-      if (!shouldContinuePolling) {
-        console.log('Polling stopped by flag');
-        return;
-      }
-
-      let partnerFound = false;
-
-      // Server check with timeout and retry logic
-      if (serverAvailable) {
-        try {
-          const response = await Promise.race([
-            LoveRoomAPI.getRoomStatus(roomCode, userSessionId),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('API timeout')), 3000)
-            )
-          ]);
-          
-          if (response.success && response.data.userCount >= 2) {
-            console.log('✅ Partner found via API');
-            partnerFound = true;
-            shouldContinuePolling = false; // Stop polling
-            
-            // Clear interval immediately
-            if (pollIntervalRef.current) {
-              clearInterval(pollIntervalRef.current);
-              pollIntervalRef.current = null;
-            }
-            
-            handlePartnerJoined({
-              roomCode,
-              partnerInfo: response.data.partner || { name: 'Your Love', id: 'partner' },
-              roomData: response.data
-            });
-            return;
-          }
-        } catch (apiError) {
-          console.log('API polling failed:', apiError.message);
-          setServerAvailable(false);
-          
-          // Retry server connection after delay
-          setTimeout(() => {
-            console.log('Retrying server connection...');
-            setServerAvailable(true);
-          }, 30000);
-        }
-      }
-
-      // Check local rooms if API failed
-      if (!partnerFound) {
-        setLocalRooms(currentRooms => {
-          const currentRoom = currentRooms[roomCode];
-          
-          if (currentRoom && currentRoom.users.length >= 2 && shouldContinuePolling) {
-            const partnerId = currentRoom.users.find(id => id !== userSessionId);
-            if (partnerId) {
-              console.log('✅ Partner found in local room');
-              partnerFound = true;
-              shouldContinuePolling = false; // Stop polling
-              
-              // Clear interval immediately
-              if (pollIntervalRef.current) {
-                clearInterval(pollIntervalRef.current);
-                pollIntervalRef.current = null;
-              }
-              
-              // Immediate partner join
-              handlePartnerJoined({
-                roomCode,
-                userId: partnerId,
-                partnerInfo: { name: 'Your Love', id: partnerId }
-              });
-            }
-          }
-          
-          return currentRooms;
-        });
-      }
-      
-    } catch (error) {
-      console.log('Polling error:', error.message);
-    }
-  };
-
-  // Clear existing interval properly
-  if (pollIntervalRef.current) {
-    clearInterval(pollIntervalRef.current);
-    pollIntervalRef.current = null;
-  }
-
-  // Start polling every 1 second
-  pollIntervalRef.current = setInterval(pollForUpdates, 1000);
-  
-  // Immediate first poll
-  pollForUpdates();
-
-  // Return cleanup function
-  return () => {
-    shouldContinuePolling = false;
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-  };
-};
-
-  const handlePartnerJoined = (data) => {
-  console.log('🎉 Partner joined:', data);
-  
-  // Stop polling immediately
-  setIsWaitingForPartner(false);
-  
-  // Clear polling
-  if (pollIntervalRef.current) {
-    clearInterval(pollIntervalRef.current);
-    pollIntervalRef.current = null;
-  }
-  
-  showNotification('💞 Your love has arrived • Connecting hearts...');
-  
-  const creatorRoomData = {
-    userRole: 'creator',
-    roomCode: generatedCode || data.roomCode,
-    partnerName: data.partnerInfo?.name || 'Your Love',
-    creatorId: userSessionId,
-    joinerId: data.userId || data.partnerInfo?.id,
-    roomId: generatedCode || data.roomCode,
-    timestamp: Date.now(),
-    partnerInfo: data.partnerInfo,
-    connectionMethod: connectionMethod
-  };
-  
-  // Faster transition
-  setTimeout(() => {
-    showNotification('💖 Opening love chat • Your hearts are now connected');
-    setTimeout(() => {
-      transitionToChat(creatorRoomData);
-    }, 1000);
-  }, 1000);
-};
-
-  // Handle when room is ready for both users
-  const handleRoomReady = (data) => {
-    console.log('Room ready:', data);
-    
-    const roomDataForUser = {
-      userRole: data.userRole || (codeCreatorId === userSessionId ? 'creator' : 'joiner'),
-      roomCode: data.roomCode,
-      partnerName: data.partnerName || 'Your Love',
-      creatorId: data.creatorId,
-      joinerId: data.joinerId,
-      roomId: data.roomId || data.roomCode,
-      timestamp: Date.now(),
-      partnerInfo: data.partnerInfo,
-      connectionMethod: connectionMethod
-    };
-    
-    transitionToChat(roomDataForUser);
-  };
-
-  // Handle partner connection confirmation
-  const handlePartnerConnected = (data) => {
-    console.log('Partner connected:', data);
-    showNotification('💕 Love connection established • Both hearts online');
-  };
-
-  // Cleanup connections
-  const cleanupConnections = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
-    
-    setConnectionStatus('disconnected');
-    setConnectionMethod('none');
-    setIsWaitingForPartner(false);
-    connectionAttempts.current = 0;
-  };
-
-  // Helper function to reset code data
-  const resetCodeData = () => {
-    setIsCodeActive(false);
-    setGeneratedCode('');
-    setCodeCreatorId('');
-    setRoomCreated(false);
-    setCodeExpiry(null);
-    setRoomData(null);
-    setIsWaitingForPartner(false);
-    cleanupConnections();
-  };
-
-  // Function to transition both users to chat
-  const transitionToChat = (chatRoomData) => {
-    console.log('Transitioning to chat with data:', chatRoomData);
-    
-    if (!onJoinChat) {
-      console.error('onJoinChat prop is not provided');
-      showNotification('❌ Error: Chat function not available. Please check parent component.');
-      return;
-    }
-    
-    if (typeof onJoinChat !== 'function') {
-      console.error('onJoinChat is not a function, received:', typeof onJoinChat, onJoinChat);
-      showNotification('❌ Error: Invalid chat function. Please refresh and try again.');
-      return;
-    }
+    setIsCreating(true);
+    setError('');
+    setSuccess('');
 
     try {
-      setRoomData(chatRoomData);
-      cleanupConnections();
-      resetCodeData();
-      onJoinChat(chatRoomData);
-      console.log('Successfully called onJoinChat');
-    } catch (error) {
-      console.error('Error calling onJoinChat:', error);
-      showNotification('❌ Error: Unable to join chat. Please refresh and try again.');
-    }
-  };
+      const newRoomCode = generateRoomCode();
+      
+      const response = await fetch(`${API_BASE_URL}/love-room/rooms/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify({
+          code: newRoomCode,
+          creatorEmail: userData.email,
+          creatorName: userData.name || userData.email.split('@')[0],
+          userId: userData.id || userData.email
+        })
+      });
 
-  const generateCode = async () => {
-  if (isCodeActive && codeCreatorId === userSessionId) {
-    showNotification('💫 You already have an active code • Wait for your love to join');
-    return;
-  }
+      const data = await response.json();
 
-  setIsLoading(true);
-  
-  try {
-    // Try API first
-    const apiResponse = await LoveRoomAPI.generateCode(userSessionId);
-    
-    if (apiResponse.success) {
-      const newCode = apiResponse.data.code;
-      const expiryTime = Date.now() + 600000;
-      
-      setGeneratedCode(newCode);
-      setCodeCreatorId(userSessionId);
-      setIsCodeActive(true);
-      setRoomCreated(true);
-      setCodeExpiry(expiryTime);
-      setIsGlitching(true);
-      setIsWaitingForPartner(true);
-      
-      setTimeout(() => setIsGlitching(false), 1000);
-      
-      showNotification('💕 Love code created • Share with your special someone');
-      
-      // Initialize connection
-      initializePolling(newCode, 'creator');
-      
-      // Set expiry timeout
-      setTimeout(() => {
-        if (isCodeActive) {
-          resetCodeData();
-          showNotification('⏰ Code expired • Generate new one for security');
-        }
-      }, 600000);
-
-    } else {
-      throw new Error(apiResponse.message || 'Failed to generate code');
-    }
-  } catch (error) {
-    console.log('API failed, using local generation:', error.message);
-    setServerAvailable(false);
-    
-    // Local code generation
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let code = '';
-    for (let i = 0; i < 12; i++) {
-      code += characters.charAt(Math.floor(Math.random() * characters.length));
-      if (i === 3 || i === 7) code += '-';
-    }
-    
-    const expiryTime = Date.now() + 600000;
-    
-    setGeneratedCode(code);
-    setCodeCreatorId(userSessionId);
-    setIsCodeActive(true);
-    setRoomCreated(true);
-    setCodeExpiry(expiryTime);
-    setIsGlitching(true);
-    setIsWaitingForPartner(true);
-    
-    // Create local room immediately
-    setLocalRooms(prev => ({
-      ...prev,
-      [code]: {
-        code: code,
-        creator: userSessionId,
-        users: [userSessionId],
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-        expiresAt: expiryTime
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to create room');
       }
-    }));
-    
-    setTimeout(() => setIsGlitching(false), 1000);
-    
-    showNotification('💕 Love code created • Share with your special someone');
-    
-    // Initialize polling
-    initializePolling(code, 'creator');
-    
-    // Set expiry timeout
-    setTimeout(() => {
-      if (isCodeActive) {
-        resetCodeData();
-        setLocalRooms(prev => {
-          const newRooms = { ...prev };
-          delete newRooms[code];
-          return newRooms;
-        });
-        showNotification('⏰ Code expired • Generate new one for security');
-      }
-    }, 600000);
-  } finally {
-    setIsLoading(false);
-  }
-};
 
-const joinRoom = async () => {
-  if (joinCode.length < 14) {
-    showNotification('💔 Invalid code format • Please enter complete code');
-    return;
-  }
-
-  setIsLoading(true);
-
-  try {
-    // FIXED: Try API first with timeout
-    const joinResponse = await Promise.race([
-      LoveRoomAPI.joinRoom(joinCode, userSessionId),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('API timeout')), 5000)
-      )
-    ]);
-    
-    if (joinResponse.success) {
-      showNotification('💖 Love code accepted • Connecting hearts...');
+      setRoomCode(newRoomCode);
+      setHasGeneratedCode(true);
       
-      // FIXED: Immediate local update and broadcast
-      const updatedRoom = {
-        code: joinCode,
-        creator: joinResponse.data.creatorId || 'unknown',
-        users: [joinResponse.data.creatorId || 'unknown', userSessionId],
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-        expiresAt: Date.now() + 600000
+      // Save room data
+      const roomData = {
+        roomCode: newRoomCode,
+        userEmail: userData.email,
+        userName: userData.name || userData.email.split('@')[0],
+        isCreator: true,
+        userId: userData.id || userData.email,
+        roomId: data.data.roomId
       };
       
-      setLocalRooms(prev => ({
-        ...prev,
-        [joinCode]: updatedRoom
-      }));
+      localStorage.setItem('activeRoomData', JSON.stringify(roomData));
       
-      // FIXED: Immediate broadcast to all tabs
-      broadcastRoomUpdate(joinCode, updatedRoom);
+      // Set expiry time from response
+      if (data.data.expiresAt) {
+        const expiryTime = new Date(data.data.expiresAt).getTime();
+        const now = Date.now();
+        setTimeRemaining(Math.max(0, expiryTime - now));
+      }
       
-      const newRoomData = {
-        userRole: 'joiner',
-        roomCode: joinCode,
-        partnerName: 'Your Love',
-        creatorId: joinResponse.data.creatorId || 'unknown',
-        joinerId: userSessionId,
-        roomId: joinResponse.data.roomId || joinCode,
-        timestamp: Date.now(),
-        connectionMethod: 'api'
-      };
+      // Show popup with countdown
+      setShowCodePopup(true);
+      setPopupTimer(15);
       
-      // FIXED: Reduced delay for faster transition
-      setTimeout(() => {
-        transitionToChat(newRoomData);
+      const timer = setInterval(() => {
+        setPopupTimer(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setShowCodePopup(false);
+            handleJoinRoom(newRoomCode, true);
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
-      
-    } else {
-      throw new Error(joinResponse.message || 'Failed to join room');
-    }
-  } catch (error) {
-    console.log('API join failed, using local validation:', error.message);
-    setServerAvailable(false);
 
-    // FIXED: Better local validation
-    const currentRoom = localRooms[joinCode];
-    
-    if (!currentRoom && joinCode !== generatedCode) {
-      showNotification('💔 Invalid love code • Room not found');
-      setIsLoading(false);
-      return;
-    }
-
-    if (codeCreatorId === userSessionId) {
-      showNotification('🚫 Cannot join your own room • Share code with your love');
-      setIsLoading(false);
-      return;
-    }
-
-    showNotification('💖 Love code accepted • Connecting hearts...');
-    
-    // FIXED: Immediate local room update
-    const updatedRoom = {
-      code: joinCode,
-      creator: codeCreatorId || 'unknown',
-      users: [codeCreatorId || 'unknown', userSessionId].filter(Boolean),
-      createdAt: Date.now(),
-      lastActivity: Date.now(),
-      expiresAt: Date.now() + 600000
-    };
-    
-    setLocalRooms(prev => ({
-      ...prev,
-      [joinCode]: updatedRoom
-    }));
-
-    // FIXED: Immediate broadcast
-    broadcastRoomUpdate(joinCode, updatedRoom);
-
-    // FIXED: Faster transition
-    setTimeout(() => {
-      const newRoomData = {
-        userRole: 'joiner',
-        roomCode: joinCode,
-        partnerName: 'Your Love',
-        creatorId: codeCreatorId,
-        joinerId: userSessionId,
-        roomId: joinCode,
-        timestamp: Date.now(),
-        connectionMethod: 'local'
-      };
-      
-      transitionToChat(newRoomData);
-    }, 1000);
-  } finally {
-    setIsLoading(false);
-  }
-};
-
-
-const broadcastRoomUpdate = (roomCode, updateData) => {
-  const broadcastData = {
-    type: 'room_update',
-    roomCode,
-    timestamp: Date.now(),
-    data: updateData
-  };
-  
-  // Method 1: localStorage
-  localStorage.setItem('loveroom_broadcast', JSON.stringify(broadcastData));
-  
-  // Method 2: Custom event
-  window.dispatchEvent(new CustomEvent('loveroom-update', { 
-    detail: broadcastData 
-  }));
-  
-  // Method 3: BroadcastChannel (if supported)
-  if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel('loveroom');
-    channel.postMessage(broadcastData);
-    channel.close();
-  }
-  
-  // Cleanup localStorage after 2 seconds
-  setTimeout(() => {
-    localStorage.removeItem('loveroom_broadcast');
-  }, 2000);
-};
-
-useEffect(() => {
-  const handleStorageChange = (e) => {
-    if (e.key === 'loveroom_broadcast' && e.newValue) {
-      try {
-        const broadcastData = JSON.parse(e.newValue);
-        handleBroadcastUpdate(broadcastData);
-      } catch (error) {
-        console.log('Broadcast parse error:', error);
-      }
-    }
-  };
-  
-  const handleCustomEvent = (e) => {
-    handleBroadcastUpdate(e.detail);
-  };
-  
-  const handleBroadcastChannel = (e) => {
-    handleBroadcastUpdate(e.data);
-  };
-  
-   const handleBroadcastUpdate = (broadcastData) => {
-    if (broadcastData.type === 'room_update') {
-      setLocalRooms(prev => {
-        const updatedRooms = {
-          ...prev,
-          [broadcastData.roomCode]: {
-            ...prev[broadcastData.roomCode],
-            ...broadcastData.data,
-            lastActivity: Date.now()
-          }
-        };
-        
-        // Check if this is the room we're waiting for
-        const room = updatedRooms[broadcastData.roomCode];
-        if (room && 
-            room.users.length >= 2 && 
-            generatedCode === broadcastData.roomCode && 
-            codeCreatorId === userSessionId &&
-            isWaitingForPartner) { // Only check if we're actually waiting
-          
-          const partnerId = room.users.find(id => id !== userSessionId);
-          if (partnerId) {
-            // Immediate response
-            handlePartnerJoined({
-              roomCode: broadcastData.roomCode,
-              userId: partnerId,
-              partnerInfo: { name: 'Your Love', id: partnerId }
-            });
-          }
-        }
-        
-        return updatedRooms;
-      });
-    }
-  };
-  
-  // Add all event listeners
-  window.addEventListener('storage', handleStorageChange);
-  window.addEventListener('loveroom-update', handleCustomEvent);
-  
-  let broadcastChannel;
-  if (typeof BroadcastChannel !== 'undefined') {
-    broadcastChannel = new BroadcastChannel('loveroom');
-    broadcastChannel.addEventListener('message', handleBroadcastChannel);
-  }
-  
-  return () => {
-    window.removeEventListener('storage', handleStorageChange);
-    window.removeEventListener('loveroom-update', handleCustomEvent);
-    if (broadcastChannel) {
-      broadcastChannel.close();
-    }
-  };
-}, [isWaitingForPartner, codeCreatorId, userSessionId, generatedCode]);
-
-  const handleJoinCodeChange = (e) => {
-    let value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    
-    let formatted = '';
-    for (let i = 0; i < value.length && i < 12; i++) {
-      if (i === 4 || i === 8) {
-        formatted += '-';
-      }
-      formatted += value[i];
-    }
-    
-    setJoinCode(formatted);
-  };
-
-  const showNotification = (message) => {       
-    const id = Date.now();
-    setNotifications(prev => [...prev, { id, message }]);
-    setTimeout(() => {
-      setNotifications(prev => prev.filter(n => n.id !== id));
-    }, 4000);
-  };
-
-const resetCode = async () => {
-  if (generatedCode) {
-    setIsLoading(true);
-    
-    try {
-      // FIXED: Pass userSessionId as the second parameter
-      await LoveRoomAPI.resetCode(generatedCode, userSessionId);
-      showNotification('🔄 Code reset • Create new love connection');
     } catch (error) {
-      console.log('API reset failed:', error.message);
-      showNotification('🔄 Code reset • Create new love connection');
+      console.error('Error creating room:', error);
+      setError(error.message || 'Failed to create room. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsCreating(false);
     }
-    
-    setLocalRooms(prev => {
-      const newRooms = { ...prev };
-      delete newRooms[generatedCode];
-      return newRooms;
-    });
-  }
-  
-  resetCodeData();
-};
-
-  useEffect(() => {
-    return () => {
-      cleanupConnections();
-    };
-  }, []);
-
-  // Security event handlers
-  useEffect(() => {
-    const handleContextMenu = (e) => e.preventDefault();
-    const handleKeyDown = (e) => {
-      if (e.key === 'PrintScreen' || 
-          (e.ctrlKey && e.shiftKey && e.key === 'S') ||
-          (e.metaKey && e.shiftKey && e.key === '3') ||
-          (e.metaKey && e.shiftKey && e.key === '4')) {
-        e.preventDefault();
-        showNotification('💕 Our moments are precious • Love protected');
-      }
-    };
-
-    document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
-  // Connection status display helper
-  const getConnectionStatusDisplay = () => {
-    if (connectionMethod === 'websocket') {
-      return connectionStatus === 'connected' ? '🟢 WebSocket' : '🟡 Connecting...';
-    } else if (connectionMethod === 'polling') {
-      return connectionStatus === 'connected' ? '🟢 Polling' : '🟡 Connecting...';
-    }
-    return '🔴 Disconnected';
   };
+
+  // Join existing room
+  const joinRoom = async () => {
+    if (!joinCode.trim() || joinCode.trim().length !== 6 || !userData?.email) {
+      setError('Please enter a valid 6-character room code');
+      return;
+    }
+
+    setIsJoining(true);
+    setError('');
+
+    try {
+      const cleanCode = joinCode.trim().toUpperCase();
+      
+      // First validate the code
+      const validation = await validateCode(cleanCode);
+      if (!validation.success) {
+        throw new Error(validation.message);
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/love-room/rooms/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify({
+          code: cleanCode,
+          userEmail: userData.email,
+          userName: userData.name || userData.email.split('@')[0],
+          userId: userData.id || userData.email
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to join room');
+      }
+
+      setSuccess('Joined successfully! Redirecting to LoveChat...');
+      
+      setTimeout(() => {
+        handleJoinRoom(cleanCode, false, data.data.roomId);
+      }, 1000);
+
+    } catch (error) {
+      console.error('Error joining room:', error);
+      setError(error.message || 'Failed to join room. Please check the code and try again.');
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
+  // Handle joining room chat
+  const handleJoinRoom = (code, isCreator = false, roomId = null) => {
+    const roomData = {
+      roomCode: code,
+      userEmail: userData.email,
+      userName: userData.name || userData.email.split('@')[0],
+      isCreator: isCreator,
+      userId: userData.id || userData.email,
+      roomId: roomId
+    };
+
+    console.log('Joining room with data:', roomData);
+    onJoinChat(roomData);
+  };
+
+  // Copy code to clipboard
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(roomCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = roomCode;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  // Handle tab changes
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setError('');
+    setSuccess('');
+    setJoinCode('');
+    if (!hasGeneratedCode) {
+      setRoomCode('');
+    }
+  };
+
+  // Format join code input
+  const formatJoinCodeInput = (value) => {
+    return value.replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  };
+
+  // Format time remaining
+  const formatTimeRemaining = (milliseconds) => {
+    if (!milliseconds || milliseconds <= 0) return 'Expired';
+    
+    const days = Math.floor(milliseconds / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((milliseconds % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    const minutes = Math.floor((milliseconds % (60 * 60 * 1000)) / (60 * 1000));
+    
+    if (days > 0) return `${days}d ${hours}h remaining`;
+    if (hours > 0) return `${hours}h ${minutes}m remaining`;
+    return `${minutes}m remaining`;
+  };
+
+  // Code visualization component
+  const CodeVisualization = ({ code }) => (
+    <div className="bg-black/70 border-2 border-pink-500/50 rounded-xl p-6 mb-4 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-r from-pink-500/10 to-purple-500/10 animate-pulse"></div>
+      <div className="relative z-10">
+        <div className="flex justify-center items-center space-x-2 mb-2">
+          <Heart className="w-6 h-6 text-pink-400 animate-pulse" />
+          <span className="text-pink-400 font-mono text-sm">LOVE CODE GENERATED</span>
+          <Heart className="w-6 h-6 text-pink-400 animate-pulse" />
+        </div>
+        <div className="text-center">
+          <div className="text-3xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-pink-400 font-mono tracking-wider animate-pulse">
+            {code}
+          </div>
+          <div className="mt-2 text-xs text-gray-400 font-mono">
+            Share this code with your partner
+          </div>
+          {timeRemaining && (
+            <div className="mt-2 text-xs text-green-400 font-mono">
+              {formatTimeRemaining(timeRemaining)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-indigo-950 text-pink-400 font-mono relative overflow-hidden">
-      <div className="fixed inset-0 opacity-10 pointer-events-none">
-        <div className="absolute inset-0 bg-grid-pattern animate-matrix-move"></div>
-      </div>
-      
-      {onNavigateHome && (
-        <button
-          onClick={onNavigateHome}
-          className="fixed top-4 left-4 z-50 px-3 py-2 md:px-4 md:py-2 bg-gray-800/80 border border-pink-400 rounded-lg text-pink-400 hover:bg-pink-400/10 transition-all duration-300 text-sm md:text-base"
-        >
-          ← Back
-        </button>
-      )}
-      
-      {/* Connection Status Indicator - Mobile Optimized */}
-      {isWaitingForPartner && (
-        <div className="fixed top-4 right-4 z-50 bg-pink-900/20 border-2 border-pink-400 rounded-lg px-3 py-2 md:px-4 md:py-3 text-pink-400 text-xs md:text-sm max-w-[200px] md:max-w-none">
-          <div className="flex items-center space-x-2">
-            <div className="animate-pulse w-2 h-2 bg-pink-400 rounded-full"></div>
-            <span className="truncate">Waiting for love...</span>
-          </div>
-          <div className="text-xs text-gray-400 mt-1">
-            {getConnectionStatusDisplay()}
+    <div className="min-h-screen bg-black relative overflow-hidden">
+      {/* Code Popup */}
+      {showCodePopup && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+          <div className="bg-gradient-to-br from-gray-900 to-purple-900 border-2 border-pink-500/50 rounded-2xl p-6 md:p-8 max-w-md w-full relative">
+            <div className="text-center">
+              <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Heart className="w-6 h-6 md:w-8 md:h-8 text-white animate-pulse" />
+              </div>
+              
+              <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">ROOM CREATED!</h3>
+              <p className="text-gray-400 mb-2 text-sm">Share this code with your partner</p>
+              <p className="text-xs text-green-400 mb-6 font-mono">
+                Expires in 30 days
+              </p>
+              
+              <div className="bg-black/70 border border-pink-500/50 rounded-xl p-4 mb-6">
+                <div className="text-2xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-purple-400 font-mono tracking-wider">
+                  {roomCode}
+                </div>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-6">
+                <button
+                  onClick={copyToClipboard}
+                  className="flex-1 py-3 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold hover:from-pink-700 hover:to-purple-700 transition-all flex items-center justify-center space-x-2"
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copied ? 'COPIED!' : 'COPY CODE'}</span>
+                </button>
+                
+                <button
+                  onClick={() => {
+                    setShowCodePopup(false);
+                    handleJoinRoom(roomCode, true);
+                  }}
+                  className="px-4 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                >
+                  Skip ({popupTimer}s)
+                </button>
+              </div>
+              
+              <div className="text-xs text-gray-500 font-mono">
+                Auto-entering chat in {popupTimer} seconds...
+              </div>
+            </div>
           </div>
         </div>
       )}
-      
-      {/* Notifications - Mobile Optimized */}
-      <div className="fixed top-4 right-4 z-50 space-y-2" style={{ marginTop: isWaitingForPartner ? '80px' : '0' }}>
-        {notifications.map(notification => (
-          <div
-            key={notification.id}
-            className="bg-pink-900/20 border-2 border-pink-400 rounded-lg px-3 py-2 md:px-4 md:py-3 text-pink-400 text-xs md:text-sm animate-slide-in max-w-[280px] md:max-w-sm"
-          >
-            {notification.message}
-          </div>
-        ))}
+
+      {/* Background Effects */}
+      <div className="fixed inset-0 opacity-20">
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-purple-900"></div>
+        <div className="absolute top-10 left-10 text-4xl md:text-6xl text-pink-500 animate-bounce">💖</div>
+        <div className="absolute top-20 right-20 text-3xl md:text-4xl text-purple-400" style={{animation: 'bounce 3s ease-in-out infinite 1s'}}>✨</div>
+        <div className="absolute bottom-20 left-20 text-4xl md:text-5xl text-pink-400 animate-pulse">💕</div>
+        <div className="absolute bottom-10 right-10 text-2xl md:text-3xl text-purple-300" style={{animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite 1.5s'}}>🌹</div>
       </div>
 
-      <div className="container mx-auto px-4 py-6 md:py-8 relative z-10">
-        <header className="text-center mb-8 md:mb-12">
-          <h1 className="text-4xl md:text-6xl lg:text-7xl font-black text-pink-400 mb-4 tracking-wider animate-glow-pulse">
-            LOVEVAULT
-          </h1>
-          <p className="text-lg md:text-xl text-gray-300 mb-6 md:mb-8">Private • Romantic • Auto-Connect</p>
-        </header>
-        
-        <div className="space-y-6 md:space-y-0 md:grid md:grid-cols-1 lg:grid-cols-2 md:gap-8 mt-8 md:mt-12">
-          {/* Create Love Room - Mobile First Design */}
-          <div className="group bg-gradient-to-br from-pink-900/20 to-pink-800/10 border-2 border-pink-400 rounded-2xl p-6 md:p-8 text-center relative overflow-hidden hover:scale-105 hover:shadow-2xl hover:shadow-pink-400/30 transition-all duration-500">
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-pink-400/10 to-transparent -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+      {/* Header - Responsive */}
+      <header className="relative z-20 p-4 md:p-6 border-b border-gray-800/50 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <div className="flex items-center space-x-2 md:space-x-4">
+            <button
+              onClick={onNavigateHome}
+              className="p-2 rounded-lg bg-gray-800/50 hover:bg-gray-700/50 transition-colors"
+            >
+              <Home className="w-4 h-4 md:w-5 md:h-5 text-gray-400" />
+            </button>
+            <h1 className="text-lg md:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500 font-mono">
+              SECURE ROOM
+            </h1>
+          </div>
+          
+          <div className="flex items-center space-x-2 md:space-x-4">
+            {/* User Info */}
+            <div className="flex items-center space-x-2 px-3 py-2 bg-gray-800/50 rounded-lg">
+              <User className="w-4 h-4 text-pink-400" />
+              <span className="text-xs md:text-sm text-gray-300 font-mono hidden sm:inline">
+                {userData?.name || userEmail?.split('@')[0] || 'User'}
+              </span>
+            </div>
             
-            <div className="relative z-10">
-              <div className="text-5xl md:text-6xl mb-4 md:mb-6 animate-float">💝</div>
-              <h3 className="text-xl md:text-2xl font-bold text-pink-400 mb-3 md:mb-4 uppercase tracking-wider">
-                Create Love Room
-              </h3>
-              <p className="text-gray-300 mb-6 md:mb-8 leading-relaxed text-sm md:text-base">
-                Generate a secure code. When your love joins, you'll both auto-redirect to chat!
-              </p>
-              
-              <div className="space-y-4">
+            {/* Logout Button */}
+            <button
+              onClick={onLogout}
+              className="p-2 rounded-lg bg-red-900/30 hover:bg-red-800/50 transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-4 h-4 md:w-5 md:h-5 text-red-400" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="relative z-10 pt-6 md:pt-12 pb-20 px-4 md:px-6">
+        <div className="max-w-4xl mx-auto">
+          {/* Welcome Section */}
+          <div className="text-center mb-8 md:mb-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full mb-6">
+              <Shield className="w-8 h-8 md:w-10 md:h-10 text-white" />
+            </div>
+            <h2 className="text-2xl md:text-4xl font-bold text-white mb-4 font-mono">
+              WELCOME TO YOUR
+              <br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">
+                LOVE SANCTUARY
+              </span>
+            </h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-2xl mx-auto px-4">
+              Create a secure room or join your partner's room to begin your encrypted love adventure.
+              <br />
+              <span className="text-pink-400 font-mono text-xs md:text-sm">Your privacy is our priority. Rooms expire in 30 days.</span>
+            </p>
+          </div>
+
+          {/* Tab Navigation */}
+          <div className="flex justify-center mb-8">
+            <div className="bg-gray-800/50 rounded-lg p-1 backdrop-blur-sm w-full max-w-md">
+              <div className="flex">
                 <button
-                  onClick={generateCode}
-                  disabled={isLoading}
-                  className={`w-full bg-gradient-to-r from-pink-400 to-rose-500 text-white px-6 py-3 md:px-8 md:py-4 rounded-lg font-bold text-base md:text-lg uppercase tracking-wider transition-all duration-300 ${
-                    isLoading 
-                      ? 'opacity-50 cursor-not-allowed' 
-                      : 'hover:from-pink-300 hover:to-rose-400 hover:-translate-y-1 hover:shadow-lg hover:shadow-pink-400/50'
+                  onClick={() => handleTabChange('create')}
+                  className={`flex-1 px-3 md:px-6 py-3 rounded-lg font-mono text-xs md:text-sm transition-all ${
+                    activeTab === 'create'
+                      ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'
+                      : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  {isLoading ? 'Creating...' : 'Create Love Code'}
+                  <Plus className="w-4 h-4 inline mr-1 md:mr-2" />
+                  CREATE
                 </button>
-                
-                {generatedCode && isCodeActive && (
-                  <button
-                    onClick={resetCode}
-                    disabled={isLoading} 
+                <button
+                  onClick={() => handleTabChange('join')}
+                  className={`flex-1 px-3 md:px-6 py-3 rounded-lg font-mono text-xs md:text-sm transition-all ${
+                    activeTab === 'join'
+                      ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Key className="w-4 h-4 inline mr-1 md:mr-2" />
+                  JOIN
+                </button>
+              </div>
+            </div>
+          </div>
 
-                    className={`w-full bg-gray-600 text-white px-6 py-3 md:px-6 md:py-4 rounded-lg font-bold text-sm md:text-sm uppercase tracking-wider transition-all duration-300 ${
-                      isLoading 
-                        ? 'opacity-50 cursor-not-allowed' 
-                        : 'hover:bg-gray-500'
-                    }`}
+          {/* Create Room Tab */}
+          {activeTab === 'create' && (
+            <div className="max-w-lg mx-auto">
+              <div className="bg-gradient-to-br from-gray-900/60 to-purple-900/30 border border-pink-500/20 rounded-2xl p-6 md:p-8 backdrop-blur-sm">
+                <div className="text-center mb-8">
+                  <div className="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full mb-4">
+                    <Heart className="w-6 h-6 md:w-8 md:h-8 text-white" />
+                  </div>
+                  <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">CREATE LOVE ROOM</h3>
+                  <p className="text-gray-400 text-sm">
+                    Generate a secure room code for you and your partner
+                    <br />
+                    <span className="text-xs text-green-400">Expires in 30 days</span>
+                  </p>
+                </div>
+                
+                {hasGeneratedCode && roomCode ? (
+                  <div className="space-y-6">
+                    <CodeVisualization code={roomCode} />
+                    
+                    <div className="text-center">
+                      <div className="bg-green-900/30 border border-green-500/30 rounded-lg p-4 mb-4">
+                        <p className="text-green-400 text-sm font-mono">✓ REDIRECTING TO LOVECHAT...</p>
+                      </div>
+                      
+                      <div className="flex items-center justify-center space-x-2">
+                        <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce"></div>
+                        <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                        <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={createRoom}
+                    disabled={isCreating || hasGeneratedCode}
+                    className="w-full py-4 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold text-sm md:text-lg hover:from-pink-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3"
                   >
-                    {isLoading ? 'Resetting...' : 'Reset Love Code'}
+                    {isCreating ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>CREATING ROOM...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Heart className="w-6 h-6" />
+                        <span>CREATE SECURE ROOM</span>
+                        <ArrowRight className="w-6 h-6" />
+                      </>
+                    )}
                   </button>
                 )}
-              </div>
-              
-              {generatedCode && isCodeActive && (
-                <div className={`mt-6 bg-black/80 border-2 border-pink-400 rounded-lg p-4 md:p-6 text-xl md:text-2xl text-pink-400 tracking-[0.3em] font-bold break-all ${isGlitching ? 'animate-glitch' : ''}`}>
-                  {generatedCode}
-                  <div className="text-xs md:text-sm text-gray-400 mt-3 normal-case tracking-normal space-y-1">
-                    <div>🔒 Share this code privately with your love</div>
-                    <div>⚠️ You cannot join your own room</div>
-                    <div>⏰ Code expires in 10 minutes</div>
-                    {isWaitingForPartner && (
-                      <div className="text-pink-300 animate-pulse">
-                        💕 Auto-redirect when love joins...
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Join Love Room - Mobile First Design */}
-          <div className="group bg-gradient-to-br from-pink-900/20 to-pink-800/10 border-2 border-pink-400 rounded-2xl p-6 md:p-8 text-center relative overflow-hidden hover:scale-105 hover:shadow-2xl hover:shadow-pink-400/30 transition-all duration-500">
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-pink-400/10 to-transparent -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-            
-            <div className="relative z-10">
-              <div className="text-5xl md:text-6xl mb-4 md:mb-6 animate-float">💕</div>
-              <h3 className="text-xl md:text-2xl font-bold text-pink-400 mb-3 md:mb-4 uppercase tracking-wider">
-                Join Love Room
-              </h3>
-              <p className="text-gray-300 mb-6 md:mb-8 leading-relaxed text-sm md:text-base">
-                Enter love code to instantly connect. Both of you will auto-redirect to chat!
-              </p>
-              
-              <div className="space-y-6">
-                <input
-                  type="text"
-                  value={joinCode}
-                  onChange={handleJoinCodeChange}
-                  placeholder="XXXX-XXXX-XXXX"
-                  disabled={isLoading}
-                  className={`w-full bg-black/70 border-2 border-pink-400 rounded-lg p-3 md:p-4 text-pink-400 text-lg md:text-xl text-center font-mono tracking-widest focus:outline-none focus:border-pink-300 focus:shadow-lg focus:shadow-pink-400/30 transition-all duration-300 ${
-                    isLoading ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                  maxLength="14"
-                />
                 
-                <button
-                  onClick={joinRoom}
-                  disabled={joinCode.length < 14 || isLoading}
-                  className={`w-full px-6 py-3 md:px-8 md:py-4 rounded-lg font-bold text-base md:text-lg uppercase tracking-wider transition-all duration-300 ${
-                    joinCode.length < 14 || isLoading
-                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-pink-400 to-rose-500 text-white hover:from-pink-300 hover:to-rose-400 hover:-translate-y-1 hover:shadow-lg hover:shadow-pink-400/50'
-                  }`}
-                >
-                  {isLoading ? 'Connecting...' : 'Connect Hearts'}
-                </button>
+                {error && (
+                  <div className="mt-4 bg-red-900/30 border border-red-500/30 rounded-lg p-4">
+                    <p className="text-red-400 text-sm font-mono text-center">{error}</p>
+                  </div>
+                )}
               </div>
-              
-              <div className="text-xs text-gray-500 mt-4">
-                🔒 Secure connection • Auto-redirect enabled
+            </div>
+          )}
+
+          {/* Join Room Tab */}
+          {activeTab === 'join' && (
+            <div className="max-w-lg mx-auto">
+              <div className="bg-gradient-to-br from-gray-900/60 to-purple-900/30 border border-pink-500/20 rounded-2xl p-6 md:p-8 backdrop-blur-sm">
+                <div className="text-center mb-8">
+                  <div className="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 bg-gradient-to-r from-purple-500 to-pink-600 rounded-full mb-4">
+                    <Key className="w-6 h-6 md:w-8 md:h-8 text-white" />
+                  </div>
+                  <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">JOIN LOVE ROOM</h3>
+                  <p className="text-gray-400 text-sm">
+                    Enter your partner's room code to connect
+                  </p>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-gray-400 font-mono text-sm mb-3">
+                      ROOM CODE (6 CHARACTERS):
+                    </label>
+                    <input
+                      type="text"
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(formatJoinCodeInput(e.target.value.toUpperCase()))}
+                      placeholder="ABC123"
+                      maxLength={6}
+                      className="w-full px-4 py-4 bg-black/50 border border-gray-600 rounded-lg text-white font-mono text-xl md:text-2xl text-center tracking-widest placeholder-gray-500 focus:border-pink-500 focus:outline-none transition-colors"
+                    />
+                    <p className="text-xs text-gray-500 mt-2 text-center font-mono">
+                      {joinCode.length}/6 characters
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={joinRoom}
+                    disabled={isJoining || joinCode.length !== 6}
+                    className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-bold text-sm md:text-lg hover:from-purple-700 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3"
+                  >
+                    {isJoining ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>JOINING ROOM...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Users className="w-6 h-6" />
+                        <span>JOIN LOVE ROOM</span>
+                        <ArrowRight className="w-6 h-6" />
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {error && (
+                  <div className="mt-4 bg-red-900/30 border border-red-500/30 rounded-lg p-4">
+                    <p className="text-red-400 text-sm font-mono text-center">{error}</p>
+                  </div>
+                )}
+
+                {success && (
+                  <div className="mt-4 bg-green-900/30 border border-green-500/30 rounded-lg p-4">
+                    <p className="text-green-400 text-sm font-mono text-center">{success}</p>
+                  </div>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* Info Section */}
+          <div className="mt-12 md:mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+            <div className="text-center p-4 md:p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
+              <Shield className="w-6 h-6 md:w-8 md:h-8 text-pink-400 mx-auto mb-3" />
+              <h4 className="text-white font-mono font-bold mb-2 text-sm md:text-base">END-TO-END ENCRYPTED</h4>
+              <p className="text-gray-400 text-xs md:text-sm">Your conversations are protected with military-grade encryption</p>
+            </div>
+            
+            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
+              <Heart className="w-8 h-8 text-purple-400 mx-auto mb-3" />
+              <h4 className="text-white font-mono font-bold mb-2">COUPLE-FOCUSED</h4>
+              <p className="text-gray-400 text-sm">Designed specifically for intimate conversations between couples</p>
+            </div>
+            
+            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
+              <Lock className="w-8 h-8 text-green-400 mx-auto mb-3" />
+              <h4 className="text-white font-mono font-bold mb-2">ZERO LOGGING</h4>
+              <p className="text-gray-400 text-sm">We don't store your messages or personal information</p>
             </div>
           </div>
         </div>
-        <footer className="text-center mt-16 text-gray-500 text-sm">
-          <p>💖 Auto-connect • Real-time love • Hearts synchronized forever 💖</p>
-        </footer>
-      </div>
+      </main>
     </div>
   );
 };

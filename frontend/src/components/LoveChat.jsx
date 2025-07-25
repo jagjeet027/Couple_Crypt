@@ -1,697 +1,1036 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, Video, Smile, Paperclip, Camera, FileText, File, Image, Send, ArrowLeft, MoreVertical } from 'lucide-react';
+import { Send, Heart, Smile, MoreVertical,
+  Edit3,Trash2,Copy,Check,CheckCheck,Shield,Wifi,WifiOff,User,Phone,LogOut,Video,PhoneOff,UserX
+} from 'lucide-react';
+import { io } from 'socket.io-client';
+import CallInterface from './CallInterface';
+import axios from 'axios';
 
-// Real Socket.io implementation
-const createSocketConnection = (serverUrl = 'http://localhost:2004') => {
-  // In a real app, you would import socket.io-client
-  // For now, we'll create a more realistic mock that handles connection properly
-  const eventHandlers = {};
-  let connected = false;
-  let reconnectAttempts = 0;
-  const maxReconnectAttempts = 5;
-  
-  const socket = {
-    connected: false,
-    
-    on: (event, handler) => {
-      if (!eventHandlers[event]) {
-        eventHandlers[event] = [];
-      }
-      eventHandlers[event].push(handler);
-    },
-    
-    emit: (event, data) => {
-      console.log(`Socket emit: ${event}`, data);
-      
-      if (!connected && event !== 'connect') {
-        console.warn('Socket not connected, queuing message:', event);
-        return;
-      }
-      
-      // Simulate more realistic responses
-      setTimeout(() => {
-        switch (event) {
-          case 'join-room':
-            if (eventHandlers['joined-room']) {
-              eventHandlers['joined-room'].forEach(handler => 
-                handler({ success: true, roomId: data.roomId, userId: data.userId })
-              );
-            }
-            break;
-            
-          case 'send-message':
-            // Don't echo back user's own messages
-            setTimeout(() => {
-              if (eventHandlers['message-sent']) {
-                eventHandlers['message-sent'].forEach(handler => 
-                  handler({ messageId: Date.now(), success: true })
-                );
-              }
-            }, 100);
-            break;
-            
-          case 'typing-start':
-            // Simulate partner typing back occasionally
-            if (Math.random() > 0.7) {
-              setTimeout(() => {
-                if (eventHandlers['user-typing']) {
-                  eventHandlers['user-typing'].forEach(handler => 
-                    handler({ userId: 'partner', typing: true })
-                  );
-                }
-                
-                setTimeout(() => {
-                  if (eventHandlers['user-typing']) {
-                    eventHandlers['user-typing'].forEach(handler => 
-                      handler({ userId: 'partner', typing: false })
-                    );
-                  }
-                }, 2000);
-              }, 1000);
-            }
-            break;
-        }
-      }, 200 + Math.random() * 300); // Realistic network delay
-    },
-    
-    disconnect: () => {
-      connected = false;
-      socket.connected = false;
-      console.log('Socket disconnected');
-      if (eventHandlers['disconnect']) {
-        eventHandlers['disconnect'].forEach(handler => handler());
-      }
-    },
-    
-    connect: () => {
-      if (!connected) {
-        connected = true;
-        socket.connected = true;
-        reconnectAttempts = 0;
-        console.log('Socket connected');
-        if (eventHandlers['connect']) {
-          eventHandlers['connect'].forEach(handler => handler());
-        }
-      }
-    }
-  };
-  
-  // Simulate initial connection attempt
-  setTimeout(() => {
-    if (reconnectAttempts < maxReconnectAttempts) {
-      socket.connect();
-    }
-  }, 1000 + Math.random() * 2000);
-  
-  return socket;
-};
-
-// API Configuration
-const API_BASE_URL = 'http://localhost:2004/api';
-
-// Improved API Helper Functions
-const apiCall = async (endpoint, options = {}) => {
-  try {
-    const mockToken = 'mock-auth-token-12345';
-    
-    console.log(`API Call: ${API_BASE_URL}${endpoint}`, options);
-    
-    // Add realistic delay
-    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500));
-    
-    // Simulate more realistic API responses
-    if (endpoint.includes('/rtc/initialize')) {
-      return { 
-        success: true, 
-        data: { 
-          sessionId: `session_${Date.now()}`,
-          serverTime: new Date().toISOString()
-        } 
-      };
-    } else if (endpoint.includes('/rtc/messages/')) {
-      return { 
-        success: true, 
-        data: { 
-          messages: [
-            {
-              messageId: 1,
-              sender: { role: 'system' },
-              message: 'Welcome to Love Chat! 💕 Your secure connection is ready.',
-              timestamp: new Date(Date.now() - 60000).toISOString()
-            }
-          ] 
-        } 
-      };
-    } else if (endpoint.includes('/rtc/message/send')) {
-      return { 
-        success: true, 
-        messageId: Date.now(),
-        timestamp: new Date().toISOString()
-      };
-    } else if (endpoint.includes('/rtc/call/start')) {
-      return { 
-        success: true, 
-        callId: `call_${Date.now()}`,
-        sdpOffer: 'mock-sdp-offer'
-      };
-    }
-    
-    return { success: true };
-  } catch (error) {
-    console.error('API call failed:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-// Love Chat Component
-const LoveChat = ({ 
-  roomData = { roomCode: 'DEMO123', partnerName: 'Your Love', userRole: 'creator' }, 
-  userData = { userId: 'user123' }, 
-  onLeaveChat = () => console.log('Leave chat'), 
-  onNavigateHome = () => console.log('Navigate home') 
-}) => {
-  // Extract data from props with fallbacks
-  const userRole = roomData?.userRole || 'creator';
-  const roomCode = roomData?.roomCode || roomData?.roomId || 'DEMO123';
-  const partnerName = roomData?.partnerName || roomData?.partnerEmail || 'Your Love';
-  const userId = userData?.userId || userData?.id || 'user123';
-  
+const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateToGame }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState('connecting');
-  const [notifications, setNotifications] = useState([]);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showFileOptions, setShowFileOptions] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [socket, setSocket] = useState(null);
-  const [rtcInitialized, setRtcInitialized] = useState(false);
-  const [authToken] = useState('mock-auth-token-12345');
-  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [showMenuOptions, setShowMenuOptions] = useState(false);
+  const [messageMenuId, setMessageMenuId] = useState(null);
+  const [showCallInterface, setShowCallInterface] = useState(false);
+  const [roomValidated, setRoomValidated] = useState(false);
   
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
+  const messageInputRef = useRef(null);
+  const menuRef = useRef(null);
+  const validationTimeoutRef = useRef(null);
 
-  const emojis = ['😀', '😂', '😍', '😘', '💕', '💖', '💗', '💓', '💞', '💝', '🌹', '🌺', '🌻', '🌼', '🦋', '🌈', '⭐', '💫', '✨', '💎'];
+  const API_BASE_URL = 'http://localhost:2004/api';
+  const SOCKET_URL = 'http://localhost:2004';
 
-  const fileOptions = [
-    { icon: Image, label: 'Image', color: 'text-purple-400' },
-    { icon: FileText, label: 'PDF', color: 'text-red-400' },
-    { icon: File, label: 'Document', color: 'text-blue-400' },
-    { icon: Video, label: 'Video', color: 'text-green-400' }
-  ];
+  // Emojis for quick selection
+  const quickEmojis = ['❤️', '💕', '😘', '🥰', '😍', '💖', '💋', '🌹', '💝', '✨', '🔥', '😊', '😂', '🤗', '😉', '💯'];
 
-  // Initialize socket connection with proper error handling
+  // Helper function to show error with auto-clear
+  const showError = (message, duration = 5000) => {
+    setError(message);
+    setTimeout(() => setError(''), duration);
+  };
+
+  // Helper function to show success with auto-clear
+  const showSuccess = (message, duration = 3000) => {
+    setSuccess(message);
+    setTimeout(() => setSuccess(''), duration);
+  };
+
+  // Close menu when clicking outside
   useEffect(() => {
-    console.log('Initializing socket connection for room:', roomCode);
-    
-    const socketConnection = createSocketConnection();
-    setSocket(socketConnection);
-
-    // Socket event listeners
-    socketConnection.on('connect', () => {
-      console.log('Connected to server');
-      setConnectionStatus('connected');
-      setReconnectAttempts(0);
-      showNotification('💕 Connected to Love Chat!');
-      
-      // Join room after connection
-      setTimeout(() => {
-        joinRoom();
-      }, 500);
-    });
-
-    socketConnection.on('disconnect', () => {
-      console.log('Disconnected from server');
-      setConnectionStatus('disconnected');
-      showNotification('💔 Connection lost. Trying to reconnect...');
-      
-      // Attempt to reconnect
-      if (reconnectAttempts < 5) {
-        setReconnectAttempts(prev => prev + 1);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting to reconnect...');
-          setConnectionStatus('connecting');
-          socketConnection.connect();
-        }, 2000 * (reconnectAttempts + 1));
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setShowMenuOptions(false);
       }
-    });
-
-    socketConnection.on('joined-room', (data) => {
-      console.log('Successfully joined room:', data);
-      setConnectionStatus('connected');
-      showNotification(`💕 Successfully joined room ${roomCode}`);
-      loadChatHistory();
-    });
-
-    socketConnection.on('new-message', (messageData) => {
-      console.log('Received new message:', messageData);
-      
-      // Don't add messages from the current user (avoid duplicates)
-      if (messageData.sender?.userId !== userId) {
-        const formattedMessage = {
-          id: messageData.messageId || Date.now(),
-          sender: messageData.sender?.role || 'partner',
-          text: messageData.message,
-          timestamp: new Date(messageData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
-        setMessages(prev => [...prev, formattedMessage]);
+      if (!event.target.closest('.relative')) {
+        setMessageMenuId(null);
       }
-    });
+    };
 
-    socketConnection.on('message-sent', (data) => {
-      console.log('Message sent confirmation:', data);
-    });
-
-    socketConnection.on('user-typing', (data) => {
-      if (data.userId !== userId) {
-        setPartnerTyping(data.typing);
-        
-        if (data.typing) {
-          // Auto-clear typing indicator after 3 seconds
-          setTimeout(() => {
-            setPartnerTyping(false);
-          }, 3000);
-        }
-      }
-    });
-
-    socketConnection.on('incoming-call', (data) => {
-      showNotification(`📞 Incoming ${data.callType} call from ${partnerName}`);
-    });
-
-    socketConnection.on('call-accepted', () => {
-      showNotification('📞 Call accepted! Connecting...');
-    });
-
-    socketConnection.on('call-rejected', () => {
-      showNotification('📞 Call was declined');
-    });
-
-    socketConnection.on('call-ended', () => {
-      showNotification('📞 Call ended');
-    });
-
-    socketConnection.on('user-joined', () => {
-      showNotification(`💕 ${partnerName} joined the chat`);
-    });
-
-    socketConnection.on('user-left', () => {
-      showNotification(`💔 ${partnerName} left the chat`);
-      setConnectionStatus('disconnected');
-    });
-
-    socketConnection.on('error', (error) => {
-      console.error('Socket error:', error);
-      showNotification(`❌ Connection error: ${error.message || 'Unknown error'}`);
-      setConnectionStatus('error');
-    });
-
+    document.addEventListener('mousedown', handleClickOutside);
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      socketConnection.disconnect();
+      document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [roomCode, userId, reconnectAttempts]);
-
-  // Initialize RTC session
-  const initializeRTC = async () => {
-    try {
-      console.log('Initializing RTC session...');
-      const response = await apiCall('/rtc/initialize', {
-        method: 'POST',
-        body: JSON.stringify({
-          roomId: roomCode,
-          userId: userId
-        })
-      });
-
-      if (response.success) {
-        setRtcInitialized(true);
-        console.log('RTC initialized successfully:', response.data);
-        showNotification('🔒 Secure connection established');
-      } else {
-        throw new Error(response.error || 'Failed to initialize RTC');
-      }
-    } catch (error) {
-      console.error('Failed to initialize RTC:', error);
-      showNotification('❌ Failed to initialize secure connection');
-      setConnectionStatus('error');
-    }
-  };
-
-  // Join room via socket
-  const joinRoom = () => {
-    if (socket && socket.connected && roomCode && userId) {
-      console.log('Joining room:', roomCode, 'as user:', userId);
-      socket.emit('join-room', {
-        roomId: roomCode,
-        userId: userId,
-        userRole: userRole,
-        token: authToken
-      });
-    } else {
-      console.warn('Cannot join room - socket not ready:', {
-        hasSocket: !!socket,
-        connected: socket?.connected,
-        roomCode,
-        userId
-      });
-    }
-  };
-
-  // Load chat history
-  const loadChatHistory = async () => {
-    try {
-      console.log('Loading chat history...');
-      const response = await apiCall(`/rtc/messages/${roomCode}/${userId}`);
-      
-      if (response.success && response.data.messages) {
-        const formattedMessages = response.data.messages.map(msg => ({
-          id: msg.messageId,
-          sender: msg.sender.role,
-          text: msg.message,
-          timestamp: new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }));
-        setMessages(formattedMessages);
-        console.log('Chat history loaded:', formattedMessages);
-      }
-    } catch (error) {
-      console.error('Failed to load chat history:', error);
-      showNotification('⚠️ Could not load previous messages');
-    }
-  };
-
-  // Check mobile screen size
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Room validation function
+  const validateRoomAccess = async () => {
+    if (!roomData || !userData) {
+      console.error('Missing roomData or userData');
+      return false;
+    }
+
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        console.error('No auth token found');
+        showError('Authentication required. Please login again.');
+        setTimeout(() => {
+          localStorage.removeItem('activeRoomData');
+          onLeaveChat();
+        }, 2000);
+        return false;
+      }
+
+      const userId = userData.id || userData.email;
+      const url = `${API_BASE_URL}/love-room/rooms/status/${roomData.roomCode}?userId=${encodeURIComponent(userId)}`;
+      
+      console.log('Validating room access:', { 
+        roomCode: roomData.roomCode, 
+        userId: userId,
+        url: url 
+      });
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('Room validation response status:', response.status);
+
+      if (!response.ok) {
+        let errorMessage = 'Room access validation failed';
+        
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+          console.error('Room validation error data:', errorData);
+        } catch (e) {
+          console.error('Failed to parse error response:', e);
+        }
+
+        console.error('Room validation failed:', response.status, errorMessage);
+        
+        if (response.status === 404) {
+          showError('Room not found. It may have been deleted or expired.');
+        } else if (response.status === 403) {
+          showError('You do not have access to this room.');
+        } else if (response.status === 401) {
+          showError('Authentication failed. Please login again.');
+        } else {
+          showError(errorMessage);
+        }
+
+        setTimeout(() => {
+          localStorage.removeItem('activeRoomData');
+          onLeaveChat();
+        }, 3000);
+        return false;
+      }
+      
+      const data = await response.json();
+      console.log('Room validation success:', data);
+      
+      if (!data.success) {
+        showError(data.error || 'Room validation failed');
+        setTimeout(() => {
+          localStorage.removeItem('activeRoomData');
+          onLeaveChat();
+        }, 2000);
+        return false;
+      }
+
+      setRoomValidated(true);
+      return true;
+    } catch (error) {
+      console.error('Error validating room:', error);
+      showError('Connection issues detected. Please check your internet connection.');
+      return false;
+    }
+  };
+
+  // Request notification permission
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        console.log('Notification permission:', permission);
+      });
+    }
+  }, []);
+
+  // Initial room validation
+  useEffect(() => {
+    const initialValidation = async () => {
+      if (roomData && userData && !roomValidated) {
+        console.log('Starting initial room validation...');
+        const isValid = await validateRoomAccess();
+        if (!isValid) {
+          return; // Component will be unmounted by onLeaveChat
+        }
+      }
+    };
+
+    initialValidation();
+  }, [roomData, userData]);
+
+  // Periodic room validation (every 30 seconds)
+  useEffect(() => {
+    if (!roomValidated) return;
+
+    const periodicValidation = async () => {
+      const isValid = await validateRoomAccess();
+      if (!isValid) {
+        return; // Component will be unmounted
+      }
+    };
+
+    // Set up periodic validation
+    validationTimeoutRef.current = setInterval(periodicValidation, 30000);
+
+    return () => {
+      if (validationTimeoutRef.current) {
+        clearInterval(validationTimeoutRef.current);
+      }
+    };
+  }, [roomValidated, roomData, userData]);
+
+  // Initialize socket connection only after room validation
+  useEffect(() => {
+    if (!roomData || !userData || !roomValidated) return;
+
+    console.log('Initializing socket connection...');
+    const token = localStorage.getItem('authToken');
+    
+    const socketInstance = io(SOCKET_URL, {
+        auth: {
+          token: token
+        },
+        transports: ['websocket', 'polling'], // ✅ Add polling fallback
+        timeout: 20000,
+        forceNew: true
+      });
+
+    socketInstance.on('messages-auto-cleaned', (data) => {
+      console.log('Messages auto-cleaned:', data);
+      loadMessages();
+      showSuccess('Old messages were automatically removed');
+    });
+
+    socketInstance.on('connect', (socketId) => {
+      console.log('Socket connected:', socketInstance.id);
+      setIsConnected(true);
+      setConnectionStatus('connected');
+      setError('');
+      socketInstance.emit('join-room', roomData.roomCode);
+    });
+
+    socketInstance.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason);
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
+      
+      if (reason === 'io server disconnect') {
+        // Server disconnected us, try to reconnect
+        socketInstance.connect();
+      }
+    });
+
+    socketInstance.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      setConnectionStatus('error');
+      setIsConnected(false);
+      showError('Connection failed. Retrying...');
+    });
+
+    socketInstance.on('new-message', (message) => {
+      console.log('New message received:', message);
+      setMessages(prev => [...prev, message]);
+      
+      if (message.senderId !== (userData.id || userData.email) && document.hasFocus()) {
+        setTimeout(() => {
+          markMessageAsRead(message._id);
+        }, 1000);
+      }
+    });
+
+    socketInstance.on('message-sent', (response) => {
+      console.log('Message sent confirmation:', response);
+      if (response.success) {
+        showSuccess('Message sent successfully', 2000);
+      }
+    });
+
+    socketInstance.on('message-error', (error) => {
+      console.error('Message error:', error);
+      showError(error.error || 'Failed to send message');
+    });
+
+    socketInstance.on('message-deleted', (data) => {
+      console.log('Message deleted:', data);
+      setMessages(prev => prev.map(msg => 
+        msg._id === data.messageId 
+          ? { ...msg, deleted: true, deletedAt: data.deletedAt }
+          : msg
+      ));
+    });
+
+    socketInstance.on('message-edited', (data) => {
+      console.log('Message edited:', data);
+      setMessages(prev => prev.map(msg => 
+        msg._id === data.messageId 
+          ? { ...msg, message: data.newMessage, edited: true, editedAt: data.editedAt }
+          : msg
+      ));
+    });
+
+    socketInstance.on('user-typing', (data) => {
+      console.log('User typing:', data);
+      if (data.userId !== (userData.id || userData.email)) {
+        setPartnerTyping(data.isTyping);
+      }
+    });
+
+    socketInstance.on('incoming-call', (data) => {
+      console.log('Incoming call for popup:', data);
+      // This will be handled by CallInterface component
+    });
+
+    // Add these inside the existing socket event listeners useEffect
+    socketInstance.on('incoming-call-notification', (data) => {
+      console.log('Incoming call notification for chat:', data);
+      
+      // Add call message to chat
+      const callMessage = {
+        _id: data.callMessageId,
+        messageType: 'call',
+        callType: data.callType,
+        senderId: data.callerId,
+        senderName: data.callerName,
+        timestamp: data.timestamp,
+        message: `Incoming ${data.callType} call`,
+        callData: {
+          status: 'initiated',
+          callType: data.callType,
+          callerId: data.callerId,
+          callerName: data.callerName
+        }
+      };
+      
+      setMessages(prev => [...prev, callMessage]);
+      
+      // Show browser notification if permission granted
+      if (Notification.permission === 'granted') {
+        new Notification(`Incoming ${data.callType} call`, {
+          body: `${data.callerName} wants to ${data.callType} chat with you`,
+          icon: '/favicon.ico',
+          tag: 'love-room-call'
+        });
+      }
+      
+      // Play notification sound (optional)
+      try {
+        const audio = new Audio('/notification-sound.mp3');
+        audio.play().catch(e => console.log('Could not play notification sound'));
+      } catch (e) {
+        console.log('Notification sound not available');
+      }
+    });
+
+    socketInstance.on('message-updated', (updatedMessage) => {
+      console.log('Message updated:', updatedMessage);
+      setMessages(prev => prev.map(msg => 
+        msg._id === updatedMessage._id ? updatedMessage : msg
+      ));
+    });
+
+    // Handle call status notifications
+    socketInstance.on('call-accepted-notification', (data) => {
+      console.log('Call accepted notification:', data);
+      setMessages(prev => prev.map(msg => 
+        msg._id === data.callMessageId 
+          ? { 
+              ...msg, 
+              message: 'Call accepted',
+              callData: { 
+                ...msg.callData, 
+                status: 'accepted',
+                acceptedBy: data.acceptedBy,
+                acceptedAt: data.acceptedAt
+              }
+            }
+          : msg
+      ));
+    });
+
+    socketInstance.on('call-rejected-notification', (data) => {
+      console.log('Call rejected notification:', data);
+      setMessages(prev => prev.map(msg => 
+        msg._id === data.callMessageId 
+          ? { 
+              ...msg, 
+              message: data.reason === 'timeout' ? 'Call timed out' : 'Call declined',
+              callData: { 
+                ...msg.callData, 
+                status: data.reason === 'timeout' ? 'timeout' : 'rejected',
+                rejectedBy: data.rejectedBy,
+                rejectedAt: data.rejectedAt
+              }
+            }
+          : msg
+      ));
+    });
+
+    socketInstance.on('call-ended-notification', (data) => {
+      console.log('Call ended notification:', data);
+      setMessages(prev => prev.map(msg => 
+        msg._id === data.callMessageId 
+          ? { 
+              ...msg, 
+              message: `Call ended ${data.duration ? `(${Math.floor(data.duration / 60)}:${(data.duration % 60).toString().padStart(2, '0')})` : ''}`,
+              callData: { 
+                ...msg.callData, 
+                status: 'ended',
+                duration: data.duration,
+                endedBy: data.endedBy,
+                endedAt: data.endedAt
+              }
+            }
+          : msg
+      ));
+    });
+
+    socketInstance.on('message-read', (data) => {
+      console.log('Message read:', data);
+      setMessages(prev => prev.map(msg => {
+        if (msg._id === data.messageId) {
+          const updatedReadBy = [...(msg.readBy || [])];
+          if (!updatedReadBy.find(read => read.userId === data.userId)) {
+            updatedReadBy.push({ userId: data.userId, readAt: data.readAt });
+          }
+          return { ...msg, readBy: updatedReadBy };
+        }
+        return msg;
+      }));
+    });
+
+    setSocket(socketInstance);
+
+    return () => {
+      console.log('Cleaning up socket connection...');
+      socketInstance.disconnect();
+    };
+  }, [roomData, userData, roomValidated]);
+
+  // Load initial messages only after room validation
+  useEffect(() => {
+    if (roomData?.roomCode && roomValidated) {
+      loadMessages();
+    }
+  }, [roomData?.roomCode, roomValidated]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    scrollToBottom();
   }, [messages]);
 
-  // Initialize RTC when connected
-  useEffect(() => {
-    if (connectionStatus === 'connected' && !rtcInitialized) {
-      setTimeout(() => {
-        initializeRTC();
-      }, 1000);
+  const handleLeaveRoom = async () => {
+    if (roomData.isCreator) {
+      await deleteRoom();
     }
-  }, [connectionStatus, rtcInitialized]);
-
-  const showNotification = (message) => {
-    const id = Date.now();
-    setNotifications(prev => [...prev, { id, message }]);
-    setTimeout(() => {
-      setNotifications(prev => prev.filter(n => n.id !== id));
-    }, 4000);
-  };
-
-  const sendMessage = async () => {
-    if (newMessage.trim() === '' || !socket || !socket.connected) {
-      if (!socket?.connected) {
-        showNotification('❌ Not connected to chat server');
-      }
-      return;
-    }
-
-    const messageText = newMessage.trim();
     
+    localStorage.removeItem('activeRoomData');
+    setShowMenuOptions(false);
+    onNavigateHome();
+  };
+
+  const handleLogout = () => {
+    setShowMenuOptions(false);
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('activeRoomData');
+    onNavigateHome();
+  };
+
+  // Load messages from API
+  const loadMessages = async () => {
     try {
-      // Add message to local state immediately for better UX
-      const newMsg = {
-        id: Date.now(),
-        sender: userRole,
-        text: messageText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, newMsg]);
-      setNewMessage('');
-      setShowEmojiPicker(false);
-
-      // Send via socket for real-time delivery
-      socket.emit('send-message', {
-        roomId: roomCode,
-        senderId: userId,
-        message: messageText,
-        messageType: 'text',
-        timestamp: new Date().toISOString()
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${API_BASE_URL}/messages/room/${roomData.roomCode}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
 
-      // Also send via API for persistence
-      const response = await apiCall('/rtc/message/send', {
-        method: 'POST',
-        body: JSON.stringify({
-          roomId: roomCode,
-          senderId: userId,
-          message: messageText,
-          messageType: 'text'
-        })
-      });
-
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to send message');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          // Include all message types including call messages
+          const allMessages = data.data.messages;
+          setMessages(allMessages);
+          console.log('Messages loaded:', allMessages.length);
+        }
+      } else {
+        console.error('Failed to load messages:', response.status);
+        showError('Failed to load messages');
       }
-      
-      // Stop typing indicator
-      if (isTyping) {
-        socket.emit('typing-stop', { roomId: roomCode, userId });
-        setIsTyping(false);
-      }
-
     } catch (error) {
-      console.error('Failed to send message:', error);
-      showNotification('❌ Failed to send message. Please try again.');
-      
-      // Remove the message from local state on failure
-      setMessages(prev => prev.filter(msg => msg.text !== messageText || msg.id !== newMsg.id));
-      setNewMessage(messageText); // Restore the message text
+      console.error('Error loading messages:', error);
+      showError('Failed to load messages');
     }
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+  // Send message
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    
+    if (!newMessage.trim() || !socket || !isConnected) return;
+
+    // Validate room access before sending
+    const isValid = await validateRoomAccess();
+    if (!isValid) return;
+
+    const messageData = {
+      roomId: roomData.roomCode,
+      message: newMessage.trim(),
+      messageType: 'text'
+    };
+
+    console.log('Sending message:', messageData);
+    socket.emit('send-message', messageData);
+    
+    setNewMessage('');
+    setShowEmojiPicker(false);
+    handleTypingStop();
   };
 
-  const handleInputChange = (e) => {
+  // Handle typing
+  const handleTyping = (e) => {
     setNewMessage(e.target.value);
     
-    // Handle typing indicator
-    if (socket && socket.connected && !isTyping) {
-      socket.emit('typing-start', { roomId: roomCode, userId });
+    if (!isTyping && socket && isConnected) {
       setIsTyping(true);
+      socket.emit('typing', {
+        roomId: roomData.roomCode,
+        isTyping: true
+      });
     }
 
-    // Clear existing timeout
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // Set new timeout to stop typing indicator
     typingTimeoutRef.current = setTimeout(() => {
-      if (socket && socket.connected && isTyping) {
-        socket.emit('typing-stop', { roomId: roomCode, userId });
-        setIsTyping(false);
-      }
+      handleTypingStop();
     }, 1000);
   };
 
-  const handleEmojiClick = (emoji) => {
-    setNewMessage(prev => prev + emoji);
-  };
-
-  const handleFileShare = (fileType) => {
-    showNotification(`💕 ${fileType} sharing feature coming soon!`);
-    setShowFileOptions(false);
-  };
-
-  const handleCall = async (type) => {
-    if (!socket || !socket.connected) {
-      showNotification('❌ Not connected to chat server');
-      return;
+  const handleTypingStop = () => {
+    if (isTyping && socket && isConnected) {
+      setIsTyping(false);
+      socket.emit('typing', {
+        roomId: roomData.roomCode,
+        isTyping: false
+      });
     }
+  };
 
+  const deleteRoom = async () => {
     try {
-      showNotification(`📞 Starting ${type.toLowerCase()} call...`);
-      
-      // Start call via API
-      const response = await apiCall('/rtc/call/start', {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${API_BASE_URL}/love-room/reset/${roomData.roomCode}`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
-          roomId: roomCode,
-          callerId: userId,
-          callType: type.toLowerCase()
+          userId: userData.id || userData.email
         })
       });
 
-      if (response.success) {
-        // Send call request via socket
-        const recipientId = roomData?.partnerId || roomData?.partnerUserId || 'partner';
-        socket.emit('call-request', {
-          roomId: roomCode,
-          callerId: userId,
-          recipientId: recipientId,
-          callType: type.toLowerCase(),
-          callId: response.callId
-        });
-
-        showNotification(`📞 ${type} call request sent to ${partnerName}...`);
+      const data = await response.json();
+      if (data.success) {
+        console.log('Room deleted successfully');
       } else {
-        throw new Error(response.error || 'Failed to start call');
+        console.log('Room deletion failed:', data.message);
       }
     } catch (error) {
-      console.error('Failed to start call:', error);
-      showNotification(`❌ Failed to start ${type.toLowerCase()} call`);
+      console.error('Error deleting room:', error);
     }
   };
 
-  const handleLeaveRoom = async () => {
+  // Mark message as read
+  const markMessageAsRead = async (messageId) => {
     try {
-      // Notify other users before leaving
-      if (socket && socket.connected) {
-        socket.emit('leave-room', { roomId: roomCode, userId });
-        socket.disconnect();
-      }
-
-      // Clear timeouts
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-
-      // Call the provided leave function
-      if (typeof onLeaveChat === 'function') {
-        onLeaveChat();
-      } else if (typeof onNavigateHome === 'function') {
-        onNavigateHome();
-      } else {
-        console.warn('No leave function provided');
-      }
+      const token = localStorage.getItem('authToken');
+      await fetch(`${API_BASE_URL}/messages/read/${messageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: userData.id || userData.email
+        })
+      });
     } catch (error) {
-      console.error('Error leaving room:', error);
+      console.error('Error marking message as read:', error);
     }
   };
 
-  // Get connection status display
-  const getConnectionDisplay = () => {
-    switch (connectionStatus) {
-      case 'connected':
-        return { text: '💕 Connected', color: 'text-green-400 border-green-400 bg-green-900/20' };
-      case 'connecting':
-        return { text: '🔄 Connecting...', color: 'text-yellow-400 border-yellow-400 bg-yellow-900/20' };
-      case 'disconnected':
-        return { text: '💔 Disconnected', color: 'text-red-400 border-red-400 bg-red-900/20' };
-      case 'error':
-        return { text: '❌ Error', color: 'text-red-400 border-red-400 bg-red-900/20' };
-      default:
-        return { text: '🔄 Initializing...', color: 'text-gray-400 border-gray-400 bg-gray-900/20' };
+  // Delete message
+  const deleteMessage = async (messageId) => {
+    if (!socket || !isConnected) return;
+    socket.emit('delete-message', { messageId });
+  };
+
+  // Edit message
+  const startEditMessage = (message) => {
+    setEditingMessage(message._id);
+    setEditText(message.message);
+  };
+
+  const saveEditMessage = async () => {
+    if (!editText.trim() || !socket || !isConnected) return;
+
+    socket.emit('edit-message', {
+      messageId: editingMessage,
+      newMessage: editText.trim()
+    });
+
+    setEditingMessage(null);
+    setEditText('');
+  };
+
+  const cancelEditMessage = () => {
+    setEditingMessage(null);
+    setEditText('');
+  };
+
+  // Copy message
+  const copyMessage = (text) => {
+    navigator.clipboard.writeText(text);
+    showSuccess('Message copied to clipboard', 2000);
+  };
+
+  // Scroll to bottom
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Format time
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // Format date
+  const formatDate = (timestamp) => {
+    const date = new Date(timestamp);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday';
+    } else {
+      return date.toLocaleDateString();
     }
   };
 
-  const connectionDisplay = getConnectionDisplay();
+  // Check if message is from current user
+  const isMyMessage = (message) => {
+    return message.senderId === (userData.id || userData.email);
+  };
 
-  // Mobile Header Component
-  const MobileHeader = () => (
-    <div className="bg-gradient-to-r from-pink-900/30 to-rose-900/30 border-b-2 border-pink-400/30 p-4 flex items-center justify-between">
-      <button
-        onClick={handleLeaveRoom}
-        className="text-pink-400 hover:text-pink-300 transition-colors"
-      >
-        <ArrowLeft size={24} />
-      </button>
+  // Get partner name
+  const getPartnerName = () => {
+    return roomData.isCreator ? 'Partner' : 'Creator';
+  };
+
+  // Show loading screen while validating room
+  if (!roomValidated) {
+    return (
+      <div className="h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Heart className="w-8 h-8 text-white" />
+          </div>
+          <p className="text-white text-lg font-mono">Connecting to Love Room...</p>
+          <p className="text-gray-400 text-sm mt-2">Validating access permissions</p>
+          {error && (
+            <div className="mt-4 p-3 bg-red-900/50 border border-red-500/30 rounded-lg">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen bg-black flex flex-col relative">
       
-      <div className="flex flex-col items-center">
-        <h1 className="text-xl font-bold text-pink-400">💖 {partnerName}</h1>
-        <span className={`text-xs px-2 py-1 rounded-full border ${connectionDisplay.color}`}>
-          {connectionDisplay.text}
-        </span>
-        {partnerTyping && <span className="text-xs text-pink-300 animate-pulse">typing...</span>}
-      </div>
-      
-      <div className="flex items-center space-x-3">
-        <button
-          onClick={() => handleCall('Audio')}
-          className="text-pink-400 hover:text-pink-300 transition-colors disabled:opacity-50"
-          disabled={connectionStatus !== 'connected'}
-        >
-          <Phone size={20} />
-        </button>
-        <button
-          onClick={() => handleCall('Video')}
-          className="text-pink-400 hover:text-pink-300 transition-colors disabled:opacity-50"
-          disabled={connectionStatus !== 'connected'}
-        >
-          <Video size={20} />
-        </button>
-        <button className="text-pink-400 hover:text-pink-300 transition-colors">
-          <MoreVertical size={20} />
-        </button>
-      </div>
-    </div>
-  );
+      <header className="flex-shrink-0 bg-gray-900/80 backdrop-blur-sm border-b border-gray-800 p-4 relative z-[80]">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center">
+              <Heart className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-white font-bold">Love Room</h1>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-400">Room: {roomData.roomCode}</span>
+                <div className="flex items-center space-x-1">
+                  {isConnected ? (
+                    <Wifi className="w-3 h-3 text-green-400" />
+                  ) : (
+                    <WifiOff className="w-3 h-3 text-red-400" />
+                  )}
+                  <span className={`text-xs ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                    {connectionStatus}
+                  </span>
+                </div>
+                {partnerTyping && (
+                  <span className="text-xs text-pink-400 animate-pulse">
+                    {getPartnerName()} is typing...
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
-  // Desktop Header Component
-  const DesktopHeader = () => (
-    <header className="text-center mb-8">
-      <h1 className="text-4xl md:text-5xl font-black text-pink-400 mb-2 tracking-wider">
-        💖 LOVE CHAT 💖
-      </h1>
-      <p className="text-lg text-gray-300">Private • Secure • Just for Two</p>
-      <p className="text-sm text-pink-400 mt-2">Room: {roomCode} • Connected with {partnerName}</p>
-      {partnerTyping && <p className="text-xs text-pink-300 mt-1 animate-pulse">💕 {partnerName} is typing...</p>}
-      <div className="flex justify-center space-x-4 mt-4">
-        <button
-          onClick={() => handleCall('Audio')}
-          className="bg-pink-400/20 border border-pink-400 rounded-lg px-4 py-2 text-pink-400 hover:bg-pink-400/30 transition-all duration-300 flex items-center space-x-2 disabled:opacity-50"
-          disabled={connectionStatus !== 'connected'}
-        >
-          <Phone size={20} />
-          <span>Audio Call</span>
-        </button>
-        <button
-          onClick={() => handleCall('Video')}
-          className="bg-pink-400/20 border border-pink-400 rounded-lg px-4 py-2 text-pink-400 hover:bg-pink-400/30 transition-all duration-300 flex items-center space-x-2 disabled:opacity-50"
-          disabled={connectionStatus !== 'connected'}
-        >
-          <Video size={20} />
-          <span>Video Call</span>
-        </button>
-      </div>
-    </header>
-  );
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
+              <button
+  onClick={() => {
+    console.log('Opening call interface for testing...');
+    setShowCallInterface(true);
+  }}
+  className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+>
+  Test Call UI
+</button>
+            </div>
 
-  // Mobile Footer Component
-  const MobileFooter = () => (
-    <div className="bg-gradient-to-r from-pink-900/30 to-rose-900/30 border-t-2 border-pink-400/30 p-4">
+            {/* Three Dot Menu */}
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setShowMenuOptions(!showMenuOptions)}
+                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+              >
+                <MoreVertical className="w-5 h-5 text-gray-400" />
+              </button>
+
+              {showMenuOptions && (
+                <div className="absolute right-0 top-12 bg-gray-800 rounded-lg shadow-xl border border-gray-700 py-2 w-48 z-[70]">
+                  <button
+                    onClick={() => {
+                      setShowMenuOptions(false);
+                      onNavigateToGame();
+                    }}
+                    className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 flex items-center space-x-3 transition-colors"
+                  >
+                    <Shield className="w-4 h-4" />
+                    <span>Game Center</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setShowMenuOptions(false);
+                      setShowCallInterface(true);
+                    }}
+                    className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 flex items-center space-x-3 transition-colors"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>Start Call</span>
+                  </button>
+                  
+                  <div className="border-t border-gray-700 my-1"></div>
+                  
+                  <button
+                    onClick={handleLeaveRoom}
+                    className="w-full px-4 py-2 text-left text-red-400 hover:bg-gray-700 flex items-center space-x-3 transition-colors"
+                  >
+                    <UserX className="w-4 h-4" />
+                    <span>Leave Chat Room</span>
+                  </button>
+                  
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-2 text-left text-red-400 hover:bg-gray-700 flex items-center space-x-3 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {error && (
+        <div className="flex-shrink-0 bg-red-900/50 border-b border-red-500/30 p-3 relative z-[75]">
+          <p className="text-red-400 text-sm text-center font-mono">{error}</p>
+        </div>
+      )}
+
+      {success && (
+        <div className="flex-shrink-0 bg-green-900/50 border-b border-green-500/30 p-3 relative z-[75]">
+          <p className="text-green-400 text-sm text-center font-mono">{success}</p>
+        </div>
+      )}
+
+      {/* Messages Container */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 relative z-[10]">
+        {messages.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-8 h-8 text-white" />
+            </div>
+            <p className="text-gray-400 text-lg font-mono">Your love story begins here...</p>
+            <p className="text-gray-500 text-sm mt-2">Send your first message to start the conversation</p>
+          </div>
+        ) : (
+          messages.map((message, index) => {
+            const isMyMsg = isMyMessage(message);
+            const showDate = index === 0 || formatDate(messages[index - 1].timestamp) !== formatDate(message.timestamp);
+
+            return (
+              <div key={message._id}>
+                {/* Date separator */}
+                {showDate && (
+                  <div className="text-center my-4">
+                    <span className="bg-gray-800 text-gray-400 text-xs px-3 py-1 rounded-full">
+                      {formatDate(message.timestamp)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Message */}
+                <div className={`flex ${isMyMsg ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-xs lg:max-w-md ${isMyMsg ? 'order-2' : 'order-1'}`}>
+                    {message.deleted ? (
+                      <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+                        <p className="text-gray-500 text-sm italic">Message deleted</p>
+                        <p className="text-gray-600 text-xs mt-1">
+                          {formatTime(message.deletedAt || message.timestamp)}
+                        </p>
+                      </div>
+                    ) : message.messageType === 'call' ? (
+                      <div className={`rounded-lg p-3 relative border-2 ${isMyMsg 
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400' 
+                        : 'bg-gray-800 text-gray-100 border-gray-600'
+                      }`}>
+                        <div className="flex items-center space-x-2 mb-2">
+                          {message.callData?.callType === 'video' ? (
+                            <Video className="w-4 h-4" />
+                          ) : (
+                            <Phone className="w-4 h-4" />
+                          )}
+                          <span className="font-medium text-sm">
+                            {message.callData?.callType === 'video' ? 'Video Call' : 'Voice Call'}
+                          </span>
+                        </div>
+                        
+                        <p className="text-sm mb-2">{message.message}</p>
+                        
+                        {/* Call action buttons - only show for incoming calls that are still pending */}
+                        {message.callData?.status === 'initiated' && !isMyMessage(message) && (
+                          <div className="flex space-x-2 mt-2">
+                            <button
+                              onClick={() => {
+                                if (socket && isConnected) {
+                                  // Accept call and open call interface
+                                  socket.emit('accept-call', {
+                                    roomId: roomData.roomCode,
+                                    callMessageId: message._id,
+                                    answer: null // Will be set by CallInterface
+                                  });
+                                  setShowCallInterface(true);
+                                }
+                              }}
+                              className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white text-xs transition-colors flex items-center space-x-1"
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>Accept</span>
+                            </button>
+                            
+                            <button
+                              onClick={() => {
+                                if (socket && isConnected) {
+                                  socket.emit('reject-call', {
+                                    roomId: roomData.roomCode,
+                                    callMessageId: message._id
+                                  });
+                                }
+                              }}
+                              className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white text-xs transition-colors flex items-center space-x-1"
+                            >
+                              <PhoneOff className="w-3 h-3" />
+                              <span>Decline</span>
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Message footer */}
+                        <div className="flex items-center justify-between mt-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs opacity-75">
+                              {formatTime(message.timestamp)}
+                            </span>
+                            {message.callData?.status && (
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                message.callData.status === 'accepted' ? 'bg-green-500/20 text-green-300' :
+                                message.callData.status === 'rejected' ? 'bg-red-500/20 text-red-300' :
+                                message.callData.status === 'timeout' ? 'bg-yellow-500/20 text-yellow-300' :
+                                message.callData.status === 'ended' ? 'bg-gray-500/20 text-gray-300' :
+                                'bg-blue-500/20 text-blue-300'
+                              }`}>
+                                {message.callData.status}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`rounded-lg p-3 relative ${isMyMsg 
+                        ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white' 
+                        : 'bg-gray-800 text-gray-100'
+                      }`}
+                      onClick={() => {
+                        setMessageMenuId(messageMenuId === message._id ? null : message._id);
+                        }}>
+
+                        {editingMessage === message._id ? (
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              className="w-full bg-black/30 text-white px-2 py-1 rounded text-sm"
+                              autoFocus
+                            />
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={saveEditMessage}
+                                className="text-xs bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={cancelEditMessage}
+                                className="text-xs bg-gray-600 hover:bg-gray-700 px-2 py-1 rounded"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="break-words">{message.message}</p>
+                        )}
+
+                        {/* Message footer */}
+                        <div className="flex items-center justify-between mt-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs opacity-75">
+                              {formatTime(message.timestamp)}
+                            </span>
+                            {message.edited && (
+                              <span className="text-xs opacity-50">(edited)</span>
+                            )}
+                            
+                            {isMyMsg && (
+                              <div className="flex items-center">
+                                {message.readBy && message.readBy.length > 0 ? (
+                                  <CheckCheck className={`w-3 h-3 ${
+                                    message.readBy.some(read => read.userId !== (userData.id || userData.email)) 
+                                      ? 'text-blue-400' 
+                                      : 'text-gray-400'
+                                  }`} />
+                                ) : (
+                                  <Check className="w-3 h-3 text-gray-400" />
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {messageMenuId === message._id && !message.deleted && message.messageType !== 'call' && (
+                            <div className="absolute top-full right-0 mt-1 bg-gray-700 rounded-lg shadow-xl border border-gray-600 py-1 z-[60] min-w-[120px]">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyMessage(message.message);
+                                  setMessageMenuId(null);
+                                }}
+                                className="w-full px-3 py-1 text-left text-gray-300 hover:bg-gray-600 flex items-center space-x-2 text-sm"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>Copy</span>
+                              </button>
+                              
+                              {isMyMsg && message.messageType === 'text' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditMessage(message);
+                                    setMessageMenuId(null);
+                                  }}
+                                  className="w-full px-3 py-1 text-left text-gray-300 hover:bg-gray-600 flex items-center space-x-2 text-sm"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                  <span>Edit</span>
+                                </button>
+                              )}
+                              
+                              {isMyMsg && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteMessage(message._id);
+                                    setMessageMenuId(null);
+                                  }}
+                                  className="w-full px-3 py-1 text-left text-red-400 hover:bg-gray-600 flex items-center space-x-2 text-sm"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
       {/* Emoji Picker */}
       {showEmojiPicker && (
-        <div className="mb-4 bg-black/70 border-2 border-pink-400 rounded-lg p-4">
-          <div className="grid grid-cols-8 gap-2">
-            {emojis.map((emoji, index) => (
+        <div className="flex-shrink-0 bg-gray-800 border-t border-gray-700 p-4">
+          <div className="flex flex-wrap gap-2">
+            {quickEmojis.map((emoji, index) => (
               <button
                 key={index}
-                onClick={() => handleEmojiClick(emoji)}
-                className="text-2xl hover:bg-pink-400/20 rounded p-1 transition-all"
+                onClick={() => {
+                  setNewMessage(prev => prev + emoji);
+                  setShowEmojiPicker(false);
+                  messageInputRef.current?.focus();
+                }}
+                className="text-2xl hover:bg-gray-700 p-2 rounded transition-colors"
               >
                 {emoji}
               </button>
@@ -700,256 +1039,63 @@ const LoveChat = ({
         </div>
       )}
 
-      {/* File Options */}
-      {showFileOptions && (
-        <div className="mb-4 bg-black/70 border-2 border-pink-400 rounded-lg p-4">
-          <div className="grid grid-cols-2 gap-3">
-            {fileOptions.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => handleFileShare(option.label)}
-                className="flex items-center space-x-2 bg-pink-400/20 border border-pink-400 rounded-lg p-3 hover:bg-pink-400/30 transition-all"
-              >
-                <option.icon size={20} className={option.color} />
-                <span className="text-pink-400">{option.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Input Bar */}
-      <div className="flex items-center space-x-2">
-        <button
-          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-          className={`p-2 rounded-lg border-2 transition-all ${
-            showEmojiPicker ? 'bg-pink-400/30 border-pink-300' : 'bg-black/70 border-pink-400'
-          }`}
-        >
-          <Smile size={20} className="text-pink-400" />
-        </button>
-        
-        <input
-          type="text"
-          value={newMessage}
-          onChange={handleInputChange}
-          onKeyPress={handleKeyPress}
-          placeholder={connectionStatus === 'connected' ? "Type your love message..." : "Connecting..."}
-          className="flex-1 bg-black/70 border-2 border-pink-400 rounded-lg p-3 text-pink-400 focus:outline-none focus:border-pink-300 transition-all disabled:opacity-50"
-          disabled={connectionStatus !== 'connected'}
-        />
-        
-        <button
-          onClick={() => setShowFileOptions(!showFileOptions)}
-          className={`p-2 rounded-lg border-2 transition-all ${
-            showFileOptions ? 'bg-pink-400/30 border-pink-300' : 'bg-black/70 border-pink-400'
-          }`}
-          disabled={connectionStatus !== 'connected'}
-        >
-          <Paperclip size={20} className="text-pink-400" />
-        </button>
-        
-        <button
-          onClick={sendMessage}
-          disabled={connectionStatus !== 'connected' || !newMessage.trim()}
-          className="bg-gradient-to-r from-pink-400 to-rose-500 text-white p-3 rounded-lg hover:from-pink-300 hover:to-rose-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Send size={20} />
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-indigo-950 text-pink-400 font-mono relative overflow-hidden">
-      {/* Background Grid - Fixed JSX attribute issue */}
-      <div className="fixed inset-0 opacity-10 pointer-events-none">
-        <div className="absolute inset-0 bg-gradient-to-br from-pink-500/10 to-purple-500/10"></div>
-      </div>
-      
-      {/* Desktop Leave Button */}
-      {!isMobile && (
-        <button
-          onClick={handleLeaveRoom}
-          className="fixed top-4 left-4 z-50 px-4 py-2 bg-gray-800/80 border border-pink-400 rounded-lg text-pink-400 hover:bg-pink-400/10 transition-all duration-300"
-        >
-          ← Leave Room
-        </button>
-      )}
-      
-      {/* Desktop Connection Status */}
-      {!isMobile && (
-        <div className="fixed top-4 right-4 z-50 flex items-center space-x-4">
-          <div className={`border rounded-lg px-3 py-2 text-sm ${connectionDisplay.color}`}>
-            {connectionDisplay.text}
-          </div>
-        </div>
-      )}
-
-      {/* Notifications */}
-      <div className="fixed top-20 right-4 z-50 space-y-2 max-w-xs">
-        {notifications.map(notification => (
-          <div
-            key={notification.id}
-            className="bg-pink-900/20 border-2 border-pink-400 rounded-lg px-4 py-3 text-pink-400 text-sm animate-slide-in shadow-lg"
+      {/* Message Input */}
+      <div className="flex-shrink-0 bg-gray-900/80 backdrop-blur-sm border-t border-gray-800 p-4">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
           >
-            {notification.message}
-          </div>
-        ))}
+            <Smile className="w-5 h-5 text-gray-400" />
+          </button>
+
+          <input
+            ref={messageInputRef}
+            type="text"
+            value={newMessage}
+            onChange={handleTyping}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage(e);
+              }
+            }}
+            placeholder={isConnected && roomValidated ? "Type your message..." : "Connecting..."}
+            disabled={!isConnected || !roomValidated}
+            className="flex-1 bg-gray-800 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 disabled:opacity-50"
+          />
+
+          <button
+            type="button"
+            onClick={sendMessage}
+            disabled={!newMessage.trim() || !isConnected || !roomValidated}
+            className="p-2 rounded-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 transition-colors disabled:opacity-50"
+          >
+            <Send className="w-5 h-5 text-white" />
+          </button>
+        </div>
       </div>
 
-      {/* Mobile Layout */}
-      {isMobile ? (
-        <div className="flex flex-col h-screen">
-          <MobileHeader />
-          
-          {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${
-                  message.sender === userRole ? 'justify-end' : 
-                  message.sender === 'system' ? 'justify-center' : 'justify-start'
-                }`}
-              >
-                <div
-                  className={`max-w-[80%] px-4 py-2 rounded-lg ${
-                    message.sender === userRole
-                      ? 'bg-pink-400 text-white rounded-br-none'
-                      : message.sender === 'system'
-                      ? 'bg-gray-800/50 text-pink-400 border border-pink-400'
-                      : 'bg-gray-800 text-pink-400 border border-pink-400 rounded-bl-none'
-                  }`}
-                >
-                  <p className="text-sm">{message.text}</p>
-                  <p className="text-xs opacity-70 mt-1">{message.timestamp}</p>
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
+      {showCallInterface && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl h-[600px] bg-gray-900 rounded-xl shadow-2xl border border-gray-700 overflow-hidden">
+            <CallInterface
+              socket={socket}
+              isConnected={isConnected}
+              roomData={roomData}
+              userData={userData}
+              getPartnerName={getPartnerName}
+              onClose={() => {
+                console.log('Closing call interface from modal');
+                setShowCallInterface(false);
+              }}
+            />
           </div>
-          
-          <MobileFooter />
-        </div>
-      ) : (
-        /* Desktop Layout */
-        <div className="container mx-auto px-4 py-8 relative z-10 max-w-4xl">
-          <DesktopHeader />
-
-          <div className="bg-gradient-to-br from-pink-900/20 to-pink-800/10 border-2 border-pink-400 rounded-2xl p-6 mb-4 h-96 overflow-y-auto">
-            <div className="space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${
-                    message.sender === userRole ? 'justify-end' : 
-                    message.sender === 'system' ? 'justify-center' : 'justify-start'
-                  }`}
-                >
-                  <div
-                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                      message.sender === userRole
-                        ? 'bg-pink-400 text-white'
-                        : message.sender === 'system'
-                        ? 'bg-gray-800/50 text-pink-400 border border-pink-400'
-                        : 'bg-gray-800 text-pink-400 border border-pink-400'
-                    }`}
-                  >
-                    <p className="text-sm">{message.text}</p>
-                    <p className="text-xs opacity-70 mt-1">{message.timestamp}</p>
-                  </div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          {/* Desktop Input Section */}
-          <div className="space-y-4">
-            {/* Desktop Emoji Picker */}
-            {showEmojiPicker && (
-              <div className="bg-black/70 border-2 border-pink-400 rounded-lg p-4">
-                <div className="grid grid-cols-10 gap-2">
-                  {emojis.map((emoji, index) => (
-                    <button
-                      key={index}
-                      onClick={() => handleEmojiClick(emoji)}
-                      className="text-2xl hover:bg-pink-400/20 rounded p-2 transition-all"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {showFileOptions && (
-              <div className="bg-black/70 border-2 border-pink-400 rounded-lg p-4">
-                <div className="grid grid-cols-4 gap-4">
-                  {fileOptions.map((option, index) => (
-                    <button
-                      key={index}
-                      onClick={() => handleFileShare(option.label)}
-                      className="flex flex-col items-center space-y-2 bg-pink-400/20 border border-pink-400 rounded-lg p-4 hover:bg-pink-400/30 transition-all"
-                    >
-                      <option.icon size={24} className={option.color} />
-                      <span className="text-pink-400 text-sm">{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Desktop Input Bar */}
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className={`p-3 rounded-lg border-2 transition-all ${
-                  showEmojiPicker ? 'bg-pink-400/30 border-pink-300' : 'bg-black/70 border-pink-400'
-                }`}
-              >
-                <Smile size={20} className="text-pink-400" />
-              </button>
-              
-              <input
-                type="text"
-                value={newMessage}
-                onChange={handleInputChange}
-                onKeyPress={handleKeyPress}
-                placeholder="Type your love message..."
-                className="flex-1 bg-black/70 border-2 border-pink-400 rounded-lg p-4 text-pink-400 focus:outline-none focus:border-pink-300 focus:shadow-lg focus:shadow-pink-400/30 transition-all duration-300"
-                disabled={connectionStatus !== 'connected'}
-              />
-              
-              <button
-                onClick={() => setShowFileOptions(!showFileOptions)}
-                className={`p-3 rounded-lg border-2 transition-all ${
-                  showFileOptions ? 'bg-pink-400/30 border-pink-300' : 'bg-black/70 border-pink-400'
-                }`}
-              >
-                <Paperclip size={20} className="text-pink-400" />
-              </button>
-              
-              <button
-                onClick={sendMessage}
-                disabled={connectionStatus !== 'connected' || !newMessage.trim()}
-                className="bg-gradient-to-r from-pink-400 to-rose-500 text-white px-6 py-4 rounded-lg font-bold hover:from-pink-300 hover:to-rose-400 hover:shadow-lg hover:shadow-pink-400/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-              >
-                <Send size={20} />
-                <span>Send</span>
-              </button>
-            </div>
-          </div>
-
-          {connectionStatus !== 'connected' && (
-            <div className="text-center mt-4 text-gray-400 text-sm">
-              🔄 Establishing secure connection...
-            </div>
-          )}
         </div>
       )}
     </div>
   );
-};
+}
 
 export default LoveChat;

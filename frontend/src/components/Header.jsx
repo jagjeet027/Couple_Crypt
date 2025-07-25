@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Heart, User, LogOut, ChevronDown, MessageCircle } from 'lucide-react';
+import { Heart, User, LogOut, ChevronDown, MessageCircle} from 'lucide-react';
+import { createIcons, icons } from 'lucide';
 import axios from 'axios';
 
 // Configure axios defaults - Change this to your actual backend port
@@ -49,7 +50,7 @@ const Header = () => {
   }, []);
 
   const handleGetStarted = () => {
-    navigate('/auth');
+    navigate('/auth', { state: { redirectTo: '/' } });
   };
 
   const handleLogoClick = () => {
@@ -163,6 +164,7 @@ const Header = () => {
         >
           <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
             <Heart className="w-6 h-6 text-white" />
+            <ticketcheck className="w-6 h-6 text-white" />
           </div>
           <span className="text-2xl font-bold text-white font-mono">LoveVault</span>
         </div>
@@ -221,6 +223,7 @@ const Header = () => {
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out</span>
+                      <i data-lucide="ticket-check"></i>
                     </button>
                   </div>
                 </div>
@@ -232,7 +235,9 @@ const Header = () => {
               className="px-6 py-2 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold hover:from-pink-700 hover:to-purple-700 transition-all"
             >
               GET STARTED
+
             </button>
+            
           )}
         </nav>
 

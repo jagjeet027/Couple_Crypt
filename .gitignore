@@ -1,2 +1,6 @@
 node_modules/
 
+backend/gitlab-config/
+backend/gitlab-data/
+backend/gitlab-logs/
+backend/gitlab-runner/

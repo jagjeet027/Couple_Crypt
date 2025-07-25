@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, User, Mail, Lock, Upload, X } from 'lucide-react';
 
-const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
+const AuthPage = ({ initialPage = 'signin', onNavigate, onAuthSuccess, pendingRedirect }) => {
   const [currentPage, setCurrentPage] = useState(initialPage);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-
+  
   // SignIn form state
   const [signInData, setSignInData] = useState({
     email: '',
     password: ''
   });
-
+  
   // SignUp form state
   const [signUpData, setSignUpData] = useState({
     username: '',
@@ -23,87 +23,62 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
     age: '',
     profileImage: null
   });
-
+  
   const [imagePreview, setImagePreview] = useState(null);
-
+  
   // API Base URL
   const API_BASE_URL = 'http://localhost:2004/api/auth';
-
-  // Store authentication data (now using localStorage instead of sessionStorage)
+  
+  // Store authentication data
   const storeAuthData = (token, user) => {
     try {
-      // Store in localStorage instead of sessionStorage
       localStorage.setItem('authToken', token);
       localStorage.setItem('userData', JSON.stringify(user));
-
     } catch (error) {
       console.error('Error storing authentication data:', error);
     }
   };
-
-  // Redirect to homepage function
-  const redirectToHomepage = () => {
-    try {
-      // Method 1: Use the onNavigate prop if provided
-      if (onNavigate && typeof onNavigate === 'function') {
-        onNavigate('/');
-        return;
-      }
-
-      // Method 2: Use React Router if available (programmatic navigation)
-      if (window.history && window.history.pushState) {
-        window.history.pushState({}, '', '/');
-        // Trigger a popstate event to notify React Router of the change
-        window.dispatchEvent(new Event('popstate'));
-        return;
-      }
-
-      // Method 3: Fallback to window.location (page reload)
-      window.location.href = '/';
-    } catch (error) {
-      console.error('Error redirecting to homepage:', error);
-      // Final fallback
-      window.location.href = '/';
-    }
-  };
-
-  // Handle successful authentication
+  
   const handleAuthSuccess = (data, isSignUp = false) => {
-    const actionType = isSignUp ? 'Account created' : 'Login';
-    setMessage({ type: 'success', text: `${actionType} successfully! Redirecting to homepage...` });
-    
-    // Store authentication data
-    if (data.data && data.data.token && data.data.user) {
-      storeAuthData(data.data.token, data.data.user);
-    } else {
-      console.warn('Token or user data missing from response:', data);
+  const actionType = isSignUp ? 'Account created' : 'Login';
+  setMessage({ type: 'success', text: `${actionType} successfully! Redirecting...` });
+  
+  // Store authentication data
+  if (data.data && data.data.token && data.data.user) {
+    storeAuthData(data.data.token, data.data.user);
+  } else {
+    console.warn('Token or user data missing from response:', data);
+  }
+  
+  // Clear forms
+  if (isSignUp) {
+    setSignUpData({
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      gender: '',
+      age: '',
+      profileImage: null
+    });
+    setImagePreview(null);
+  } else {
+    setSignInData({ email: '', password: '' });
+  }
+  
+  // Trigger auth state change event
+  window.dispatchEvent(new Event('authStateChanged'));
+  
+  // Use the parent component's navigation system
+  setTimeout(() => {
+    if (onAuthSuccess) {
+      onAuthSuccess(data.data ? data.data.user : null);
+    } else if (onNavigate) {
+      onNavigate('/'); // Always redirect to home page after auth from header
     }
-    
-    // Clear forms
-    if (isSignUp) {
-      setSignUpData({
-        username: '',
-        email: '',
-        password: '',
-        confirmPassword: '',
-        gender: '',
-        age: '',
-        profileImage: null
-      });
-      setImagePreview(null);
-    } else {
-      setSignInData({ email: '', password: '' });
-    }
-    
-    // Trigger auth state change event
-    window.dispatchEvent(new Event('authStateChanged'));
-    
-    // Redirect to homepage after a short delay
-    setTimeout(() => {
-      redirectToHomepage();
-    }, 1500);
-  };
-
+  }, 1500);
+};
+  
   // Handle image upload
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -117,7 +92,6 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
         setMessage({ type: 'error', text: 'Only image files are allowed' });
         return;
       }
-
       setSignUpData({ ...signUpData, profileImage: file });
       
       // Create preview
@@ -126,18 +100,17 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
       reader.readAsDataURL(file);
     }
   };
-
+  
   // Remove image
   const removeImage = () => {
     setSignUpData({ ...signUpData, profileImage: null });
     setImagePreview(null);
   };
-
+  
   const handleSignIn = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setMessage({ type: '', text: '' });
-
     try {
       console.log('Making request to:', `${API_BASE_URL}/login`);
       
@@ -148,13 +121,10 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
         },
         body: JSON.stringify(signInData),
       });
-
       console.log('Response status:', response.status);
-
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
@@ -162,9 +132,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
         console.error('Non-JSON response:', textResponse);
         throw new Error('Server returned non-JSON response. Check server logs.');
       }
-
       const data = await response.json();
-
       if (data.success) {
         handleAuthSuccess(data, false);
       } else {
@@ -184,32 +152,29 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
       setIsLoading(false);
     }
   };
-
+  
   const handleSignUp = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setMessage({ type: '', text: '' });
-
+    
     // Validation
     if (signUpData.password !== signUpData.confirmPassword) {
       setMessage({ type: 'error', text: 'Passwords do not match' });
       setIsLoading(false);
       return;
     }
-
     if (signUpData.password.length < 6) {
       setMessage({ type: 'error', text: 'Password must be at least 6 characters' });
       setIsLoading(false);
       return;
     }
-
     // Additional validation
     if (parseInt(signUpData.age) < 13) {
       setMessage({ type: 'error', text: 'You must be at least 13 years old to create an account' });
       setIsLoading(false);
       return;
     }
-
     try {
       const formData = new FormData();
       formData.append('username', signUpData.username);
@@ -221,21 +186,17 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
       if (signUpData.profileImage) {
         formData.append('profileImage', signUpData.profileImage);
       }
-
       console.log('Making request to:', `${API_BASE_URL}/signup`);
       
       const response = await fetch(`${API_BASE_URL}/signup`, {
         method: 'POST',
         body: formData,
       });
-
       console.log('Response status:', response.status);
-
       // Check if response is OK
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
@@ -243,10 +204,8 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
         console.error('Non-JSON response:', textResponse);
         throw new Error('Server returned non-JSON response. Check server logs.');
       }
-
       const data = await response.json();
       console.log('Response data:', data);
-
       if (data.success) {
         handleAuthSuccess(data, true);
       } else {
@@ -271,13 +230,13 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
       setIsLoading(false);
     }
   };
-
+  
   // Clear message when switching between forms
   const switchPage = (page) => {
     setCurrentPage(page);
     setMessage({ type: '', text: '' });
   };
-
+  
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -303,7 +262,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
             Sign Up
           </button>
         </div>
-
+        
         {/* Message Display */}
         {message.text && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${
@@ -314,15 +273,14 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
             {message.text}
           </div>
         )}
-
+        
         {/* Sign In Form */}
         {currentPage === 'signin' && (
-          <div className="bg-white rounded-2xl shadow-xl p-8">
+          <form onSubmit={handleSignIn} className="bg-white rounded-2xl shadow-xl p-8">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
               <p className="text-gray-600 mt-2">Sign in to your account</p>
             </div>
-
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -340,7 +298,6 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Password
@@ -364,27 +321,24 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   </button>
                 </div>
               </div>
-
               <button
-                type="button"
-                onClick={handleSignIn}
+                type="submit"
                 disabled={isLoading || !signInData.email || !signInData.password}
                 className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? 'Signing In...' : 'Sign In'}
               </button>
             </div>
-          </div>
+          </form>
         )}
-
+        
         {/* Sign Up Form */}
         {currentPage === 'signup' && (
-          <div className="bg-white rounded-2xl shadow-xl p-8">
+          <form onSubmit={handleSignUp} className="bg-white rounded-2xl shadow-xl p-8">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
               <p className="text-gray-600 mt-2">Join us today</p>
             </div>
-
             <div className="space-y-6">
               {/* Profile Image Upload */}
               <div className="flex flex-col items-center">
@@ -420,7 +374,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   />
                 </label>
               </div>
-
+              
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -438,7 +392,6 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                     />
                   </div>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Age
@@ -455,7 +408,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   />
                 </div>
               </div>
-
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Email Address
@@ -472,7 +425,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   />
                 </div>
               </div>
-
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Gender
@@ -490,7 +443,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   <option value="prefer-not-to-say">Prefer not to say</option>
                 </select>
               </div>
-
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Password
@@ -515,7 +468,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   </button>
                 </div>
               </div>
-
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Confirm Password
@@ -532,17 +485,16 @@ const AuthPage = ({ initialPage = 'signin', onNavigate }) => {
                   />
                 </div>
               </div>
-
+              
               <button
-                type="button"
-                onClick={handleSignUp}
+                type="submit"
                 disabled={isLoading || !signUpData.username || !signUpData.email || !signUpData.password || !signUpData.confirmPassword || !signUpData.gender || !signUpData.age}
                 className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? 'Creating Account...' : 'Create Account'}
               </button>
             </div>
-          </div>
+          </form>
         )}
       </div>
     </div>

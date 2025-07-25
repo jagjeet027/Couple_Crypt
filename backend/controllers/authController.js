@@ -171,28 +171,30 @@ export const signout = async (req, res) => {
 // @access  Private
 export const verifyToken = async (req, res) => {
   try {
-    // Token is already verified by middleware, user info is in req.user
-    res.json({
-      success: true,
-      message: 'Token is valid',
-      data: {
-        user: {
-          id: req.user._id,
-          username: req.user.username,
-          email: req.user.email,
-          gender: req.user.gender,
-          age: req.user.age,
-          profileImage: req.user.profileImage,
-        }
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ message: 'Token not provided' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return res.status(401).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
       }
     });
   } catch (error) {
     console.error('Token verification error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during token verification',
-      error: error.message 
-    });
+    res.status(401).json({ message: 'Invalid token' });
   }
 };
 

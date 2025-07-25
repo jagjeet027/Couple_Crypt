@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Lock, Users, Star, ArrowRight, Play, Heart, MessageCircle, Eye, Code, Zap, Wifi, Terminal } from 'lucide-react';
 import Header from './Header';
+import { useNavigate } from 'react-router-dom';
+import { Star as StarIcon } from 'lucide-react';
 
 const HomePage = ({ onNavigateToSecureRoom }) => {
   const [currentTestimonial, setCurrentTestimonial] = useState(0);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [loveText, setLoveText] = useState('');
   const [showSecureRoom, setShowSecureRoom] = useState(false);
+  
+  // Fix: Call useNavigate at the top level of the component
+  const navigate = useNavigate();
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -134,10 +139,10 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
     onNavigateToSecureRoom && onNavigateToSecureRoom();
   };
 
+  // Fix: Use navigate directly without destructuring
   const handleWatchDemo = () => {
-    console.log('Starting romantic demonstration...');
+    navigate('/game-center');
   };
-
 
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">
@@ -192,7 +197,7 @@ const HomePage = ({ onNavigateToSecureRoom }) => {
                   className="group px-10 py-5 border-2 border-purple-500/50 text-purple-300 rounded-lg font-bold text-lg hover:bg-purple-500/10 transition-all flex items-center hover:scale-110 transform duration-300 backdrop-blur-sm"
                 >
                   <Play className="w-6 h-6 mr-3 group-hover:animate-pulse" />
-                  WATCH DEMO
+                  Game Center
                 </button>
               </div>
 

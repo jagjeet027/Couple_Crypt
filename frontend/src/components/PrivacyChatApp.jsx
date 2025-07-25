@@ -3,6 +3,8 @@ import HomePage from './HomePage';
 import SecureRoomPortal from './SecureRoomPortal';
 import AuthPage from '../context/AuthPage';
 import LoveChat from './LoveChat'; // Import your LoveChat component
+import { useNavigate } from 'react-router-dom';
+import GameCenter from './GameCenter'; // Import GameCenter component
 
 const PrivacyChatApp = () => {
   const [currentView, setCurrentView] = useState('home');
@@ -46,6 +48,32 @@ const PrivacyChatApp = () => {
     }
   };
 
+  const getPersistedRoomData = () => {
+    try {
+      const roomData = localStorage.getItem('activeRoomData');
+      return roomData ? JSON.parse(roomData) : null;
+    } catch (error) {
+      console.error('Error parsing room data:', error);
+      return null;
+    }
+  };
+
+  const saveRoomData = (roomData) => {
+    try {
+      localStorage.setItem('activeRoomData', JSON.stringify(roomData));
+    } catch (error) {
+      console.error('Error saving room data:', error);
+    }
+  };
+
+  const clearRoomData = () => {
+    try {
+      localStorage.removeItem('activeRoomData');
+    } catch (error) {
+      console.error('Error clearing room data:', error);
+    }
+  };
+
   const navigateToSecureRoom = async () => {
     setIsLoading(true);
     
@@ -84,11 +112,11 @@ const PrivacyChatApp = () => {
     }
   };
 
-  // Handle logout
   const handleLogout = () => {
     try {
       localStorage.removeItem('authToken');
       localStorage.removeItem('userData');
+      clearRoomData(); // Clear room data on logout
       
       setIsAuthenticated(false);
       setPendingRedirect(false);
@@ -101,11 +129,17 @@ const PrivacyChatApp = () => {
     }
   };
 
-  // Navigate back to home
   const navigateToHome = () => {
-    setCurrentView('home');
-    setPendingRedirect(false);
-    setChatRoomData(null); 
+    // Only go to home if no active room
+    const persistedRoomData = getPersistedRoomData();
+    if (persistedRoomData && isAuthenticated) {
+      setCurrentView('chat');
+      setChatRoomData(persistedRoomData);
+    } else {
+      setCurrentView('home');
+      setPendingRedirect(false);
+      setChatRoomData(null);
+    }
   };
 
   const navigateToAuth = () => {
@@ -115,13 +149,20 @@ const PrivacyChatApp = () => {
   const handleJoinChat = (roomData) => {
     console.log('Joining chat with room data:', roomData);
     setChatRoomData(roomData);
+    saveRoomData(roomData); // Persist room data
     setCurrentView('chat');
   };
 
-  // NEW: Handle leaving chat room
   const handleLeaveChat = () => {
     setChatRoomData(null);
+    clearRoomData(); // Clear persisted room data
     setCurrentView('secure-room');
+  };
+
+  // ADD THIS FUNCTION - This was missing!
+  const handleNavigateToGame = () => {
+    console.log('Navigating to game center...');
+    setCurrentView('game-center');
   };
 
   const handleAuthNavigation = (path) => {
@@ -140,13 +181,22 @@ const PrivacyChatApp = () => {
     const initializeAuth = () => {
       const authenticated = checkAuthentication();
       setIsAuthenticated(authenticated);
-      setIsLoading(false);
       
       if (authenticated) {
-        console.log('User is already authenticated');
+        // Check if user has an active room
+        const persistedRoomData = getPersistedRoomData();
+        if (persistedRoomData) {
+          setChatRoomData(persistedRoomData);
+          setCurrentView('chat');
+          console.log('User has active room, redirecting to chat');
+        } else {
+          console.log('User is authenticated but no active room');
+        }
       } else {
         console.log('User is not authenticated');
       }
+      
+      setIsLoading(false);
     };
 
     setTimeout(initializeAuth, 100);
@@ -216,11 +266,30 @@ const PrivacyChatApp = () => {
           userData={getUserData()}
         />
       )}
+
       {currentView === 'chat' && isAuthenticated && chatRoomData && (
         <LoveChat 
           roomData={chatRoomData}
           userData={getUserData()}
           onLeaveChat={handleLeaveChat}
+          onNavigateHome={navigateToHome}
+          onNavigateToGame={handleNavigateToGame} // ✅ Now properly defined
+        />
+      )}
+
+      {/* ADD THIS - GameCenter view */}
+      {currentView === 'game-center' && isAuthenticated && (
+        <GameCenter 
+          userData={getUserData()}
+          roomData={chatRoomData}
+          onNavigateBack={() => {
+            // Go back to chat if there's an active room, otherwise go to secure room
+            if (chatRoomData) {
+              setCurrentView('chat');
+            } else {
+              setCurrentView('secure-room');
+            }
+          }}
           onNavigateHome={navigateToHome}
         />
       )}

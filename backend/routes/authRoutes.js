@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { signup, login, signout,refreshToken } from '../controllers/authController.js';
+import { signup, login, signout,refreshToken, verifyToken } from '../controllers/authController.js';
 import authenticateToken from '../middleware/auth.js';
 
 const router = express.Router();
@@ -37,6 +37,23 @@ const upload = multer({
 router.post('/signup', upload.single('profileImage'), signup);
 router.post('/login', login);
 router.post('/refresh-token', refreshToken);
+// router.get('/verify', verifyToken);
+router.get('/verify', authenticateToken, (req, res) => {
+  try {
+    // If we reach here, token is valid (verified by middleware)
+    res.json({
+      success: true,
+      message: 'Token is valid',
+      user: req.user
+    });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
 
 // Protected Routes - requires authentication
 router.post('/signout', authenticateToken, signout);
