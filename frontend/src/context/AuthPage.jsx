@@ -27,7 +27,7 @@ const AuthPage = ({ initialPage = 'signin', onNavigate, onAuthSuccess, pendingRe
   const [imagePreview, setImagePreview] = useState(null);
   
   // API Base URL
-  const API_BASE_URL = 'http://localhost:2004/api/auth';
+const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
   
   // Store authentication data
   const storeAuthData = (token, user) => {

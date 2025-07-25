@@ -1,6 +1,5 @@
-// LoveRoomAPI.js - Enhanced API Service Component
-const API_BASE_URL = 'http://localhost:2004/api';
-const WS_BASE_URL = 'ws://localhost:2004/ws';
+const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
+const WS_BASE_URL = `${import.meta.env.VITE_BACKEND_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/ws`;
 
 class LoveRoomAPI {
   // Check if server is available

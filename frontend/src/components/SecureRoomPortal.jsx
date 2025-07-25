@@ -40,7 +40,7 @@ const SecureRoomPortal = ({
   const [timeRemaining, setTimeRemaining] = useState(null);
 
   // Configuration
-  const API_BASE_URL = 'http://localhost:2004/api';
+const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
   const CODE_EXPIRY_TIME = 30 * 24 * 60 * 60 * 1000; // 30 days
 
   // Initialize component

@@ -31,8 +31,8 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const menuRef = useRef(null);
   const validationTimeoutRef = useRef(null);
 
-  const API_BASE_URL = 'http://localhost:2004/api';
-  const SOCKET_URL = 'http://localhost:2004';
+const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
+const SOCKET_URL = import.meta.env.VITE_BACKEND_URL;
 
   // Emojis for quick selection
   const quickEmojis = ['❤️', '💕', '😘', '🥰', '😍', '💖', '💋', '🌹', '💝', '✨', '🔥', '😊', '😂', '🤗', '😉', '💯'];
