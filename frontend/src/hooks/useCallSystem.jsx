@@ -13,7 +13,7 @@ const ICE_SERVERS = {
   ]
 };
 
-export const useCallSystem = (socket, roomData, userData, isConnected) => {
+export const UseCallSystem = (socket, roomData, userData, isConnected) => {
   const [isInCall, setIsInCall] = useState(false);
   const [callType, setCallType] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
