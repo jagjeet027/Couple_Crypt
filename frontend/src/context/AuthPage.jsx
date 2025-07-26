@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, User, Mail, Lock, Upload, X } from 'lucide-react';
 
+console.log('Environment Check:', {
+  VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
+  API_BASE_URL: `${import.meta.env.VITE_BACKEND_URL}/api/auth`
+});
 const AuthPage = ({ initialPage = 'signin', onNavigate, onAuthSuccess, pendingRedirect }) => {
   const [currentPage, setCurrentPage] = useState(initialPage);
   const [showPassword, setShowPassword] = useState(false);
@@ -154,10 +158,17 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
   };
   
   const handleSignUp = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setMessage({ type: '', text: '' });
-    
+  e.preventDefault();
+  setIsLoading(true);
+  setMessage({ type: '', text: '' });
+  
+  // Debug logs
+  console.log('Environment variables:', {
+    VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
+    API_BASE_URL: API_BASE_URL
+  });
+  
+  console.log('Request URL:', `${API_BASE_URL}/signup`);
     // Validation
     if (signUpData.password !== signUpData.confirmPassword) {
       setMessage({ type: 'error', text: 'Passwords do not match' });
@@ -176,24 +187,30 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
       return;
     }
     try {
-      const formData = new FormData();
-      formData.append('username', signUpData.username);
-      formData.append('email', signUpData.email);
-      formData.append('password', signUpData.password);
-      formData.append('gender', signUpData.gender);
-      formData.append('age', signUpData.age);
-      
-      if (signUpData.profileImage) {
-        formData.append('profileImage', signUpData.profileImage);
-      }
-      console.log('Making request to:', `${API_BASE_URL}/signup`);
-      
-      const response = await fetch(`${API_BASE_URL}/signup`, {
-        method: 'POST',
-        body: formData,
-      });
-      console.log('Response status:', response.status);
-      // Check if response is OK
+    const formData = new FormData();
+    formData.append('username', signUpData.username);
+    formData.append('email', signUpData.email);
+    formData.append('password', signUpData.password);
+    formData.append('gender', signUpData.gender);
+    formData.append('age', signUpData.age);
+    
+    if (signUpData.profileImage) {
+      formData.append('profileImage', signUpData.profileImage);
+    }
+    
+    console.log('Making request to:', `${API_BASE_URL}/signup`);
+    console.log('FormData contents:', Object.fromEntries(formData));
+    
+    const response = await fetch(`${API_BASE_URL}/signup`, {
+      method: 'POST',
+      mode: 'cors', // Explicitly set CORS mode
+      credentials: 'include', // Include credentials
+      body: formData,
+    });
+    
+    console.log('Response status:', response.status);
+    console.log('Response headers:', Object.fromEntries(response.headers));
+          // Check if response is OK
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }

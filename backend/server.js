@@ -21,16 +21,35 @@ const app = express();
 // Create HTTP server first
 const server = http.createServer(app);
 
+// FIXED: Updated CORS configuration
 const allowedOrigins = [
-  
-"https://lovevault.onrender.com",
-  process.env.CLIENT_URL
+  "https://lovevault.onrender.com", // Your frontend URL
+  process.env.CLIENT_URL,
+  "http://localhost:3000", // For local development
+  "http://localhost:5173"  // For Vite dev server
 ].filter(Boolean);
 
+console.log('Allowed Origins:', allowedOrigins); // Debug log
+
 app.use(cors({
-  origin: allowedOrigins,
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
 }));
+
+// Add preflight handling
+app.options('*', cors());
 
 // Needed to get __dirname equivalent in ES Module
 const __filename = fileURLToPath(import.meta.url);
@@ -56,7 +75,8 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Server is running',
     timestamp: new Date(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    allowedOrigins: allowedOrigins
   });
 });
 
@@ -123,6 +143,7 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Socket.IO server initialized`);
   console.log(`Message system with auto-delete enabled`);
+  console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
 });
 
 process.on('SIGTERM', () => {
