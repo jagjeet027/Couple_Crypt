@@ -1,10 +1,6 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, User, Mail, Lock, Upload, X } from 'lucide-react';
 
-console.log('Environment Check:', {
-  VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
-  API_BASE_URL: `${import.meta.env.VITE_BACKEND_URL}/api/auth`
-});
 const AuthPage = ({ initialPage = 'signin', onNavigate, onAuthSuccess, pendingRedirect }) => {
   const [currentPage, setCurrentPage] = useState(initialPage);
   const [showPassword, setShowPassword] = useState(false);
@@ -31,7 +27,13 @@ const AuthPage = ({ initialPage = 'signin', onNavigate, onAuthSuccess, pendingRe
   const [imagePreview, setImagePreview] = useState(null);
   
   // API Base URL
-const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
+  const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
+  
+  // Debug log
+  console.log('Environment Check:', {
+    VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
+    API_BASE_URL: API_BASE_URL
+  });
   
   // Store authentication data
   const storeAuthData = (token, user) => {
@@ -44,44 +46,44 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
   };
   
   const handleAuthSuccess = (data, isSignUp = false) => {
-  const actionType = isSignUp ? 'Account created' : 'Login';
-  setMessage({ type: 'success', text: `${actionType} successfully! Redirecting...` });
-  
-  // Store authentication data
-  if (data.data && data.data.token && data.data.user) {
-    storeAuthData(data.data.token, data.data.user);
-  } else {
-    console.warn('Token or user data missing from response:', data);
-  }
-  
-  // Clear forms
-  if (isSignUp) {
-    setSignUpData({
-      username: '',
-      email: '',
-      password: '',
-      confirmPassword: '',
-      gender: '',
-      age: '',
-      profileImage: null
-    });
-    setImagePreview(null);
-  } else {
-    setSignInData({ email: '', password: '' });
-  }
-  
-  // Trigger auth state change event
-  window.dispatchEvent(new Event('authStateChanged'));
-  
-  // Use the parent component's navigation system
-  setTimeout(() => {
-    if (onAuthSuccess) {
-      onAuthSuccess(data.data ? data.data.user : null);
-    } else if (onNavigate) {
-      onNavigate('/'); // Always redirect to home page after auth from header
+    const actionType = isSignUp ? 'Account created' : 'Login';
+    setMessage({ type: 'success', text: `${actionType} successfully! Redirecting...` });
+    
+    // Store authentication data
+    if (data.data && data.data.token && data.data.user) {
+      storeAuthData(data.data.token, data.data.user);
+    } else {
+      console.warn('Token or user data missing from response:', data);
     }
-  }, 1500);
-};
+    
+    // Clear forms
+    if (isSignUp) {
+      setSignUpData({
+        username: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
+        gender: '',
+        age: '',
+        profileImage: null
+      });
+      setImagePreview(null);
+    } else {
+      setSignInData({ email: '', password: '' });
+    }
+    
+    // Trigger auth state change event
+    window.dispatchEvent(new Event('authStateChanged'));
+    
+    // Use the parent component's navigation system
+    setTimeout(() => {
+      if (onAuthSuccess) {
+        onAuthSuccess(data.data ? data.data.user : null);
+      } else if (onNavigate) {
+        onNavigate('/');
+      }
+    }, 1500);
+  };
   
   // Handle image upload
   const handleImageUpload = (e) => {
@@ -111,12 +113,12 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
     setImagePreview(null);
   };
   
-  const handleSignIn = async (e) => {
-    e.preventDefault();
+  const handleSignIn = async () => {
     setIsLoading(true);
     setMessage({ type: '', text: '' });
+    
     try {
-      console.log('Making request to:', `${API_BASE_URL}/login`);
+      console.log('Making login request to:', `${API_BASE_URL}/login`);
       
       const response = await fetch(`${API_BASE_URL}/login`, {
         method: 'POST',
@@ -125,18 +127,27 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
         },
         body: JSON.stringify(signInData),
       });
-      console.log('Response status:', response.status);
+      
+      console.log('Login response status:', response.status);
+      
+      // Get response text first
+      const responseText = await response.text();
+      console.log('Login raw response text:', responseText);
+      
+      let data;
+      try {
+        data = JSON.parse(responseText);
+        console.log('Login parsed response data:', data);
+      } catch (parseError) {
+        console.error('Failed to parse login JSON:', parseError);
+        throw new Error('Server returned invalid JSON: ' + responseText);
+      }
+      
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        console.error('Login server error response:', data);
+        throw new Error(data.message || 'Login failed');
       }
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.error('Non-JSON response:', textResponse);
-        throw new Error('Server returned non-JSON response. Check server logs.');
-      }
-      const data = await response.json();
+      
       if (data.success) {
         handleAuthSuccess(data, false);
       } else {
@@ -157,19 +168,11 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
     }
   };
   
-  const handleSignUp = async (e) => {
-  e.preventDefault();
-  setIsLoading(true);
-  setMessage({ type: '', text: '' });
-  
-  // Debug logs
-  console.log('Environment variables:', {
-    VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
-    API_BASE_URL: API_BASE_URL
-  });
-  
-  console.log('Request URL:', `${API_BASE_URL}/signup`);
-    // Validation
+  const handleSignUp = async () => {
+    setIsLoading(true);
+    setMessage({ type: '', text: '' });
+    
+    // Frontend validation
     if (signUpData.password !== signUpData.confirmPassword) {
       setMessage({ type: 'error', text: 'Passwords do not match' });
       setIsLoading(false);
@@ -180,49 +183,62 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
       setIsLoading(false);
       return;
     }
-    // Additional validation
     if (parseInt(signUpData.age) < 13) {
       setMessage({ type: 'error', text: 'You must be at least 13 years old to create an account' });
       setIsLoading(false);
       return;
     }
+    
     try {
-    const formData = new FormData();
-    formData.append('username', signUpData.username);
-    formData.append('email', signUpData.email);
-    formData.append('password', signUpData.password);
-    formData.append('gender', signUpData.gender);
-    formData.append('age', signUpData.age);
-    
-    if (signUpData.profileImage) {
-      formData.append('profileImage', signUpData.profileImage);
-    }
-    
-    console.log('Making request to:', `${API_BASE_URL}/signup`);
-    console.log('FormData contents:', Object.fromEntries(formData));
-    
-    const response = await fetch(`${API_BASE_URL}/signup`, {
-      method: 'POST',
-      mode: 'cors', // Explicitly set CORS mode
-      credentials: 'include', // Include credentials
-      body: formData,
-    });
-    
-    console.log('Response status:', response.status);
-    console.log('Response headers:', Object.fromEntries(response.headers));
-          // Check if response is OK
+      const formData = new FormData();
+      formData.append('username', signUpData.username);
+      formData.append('email', signUpData.email);
+      formData.append('password', signUpData.password);
+      formData.append('gender', signUpData.gender);
+      formData.append('age', signUpData.age);
+      
+      if (signUpData.profileImage) {
+        formData.append('profileImage', signUpData.profileImage);
+      }
+      
+      console.log('Environment variables:', {
+        VITE_BACKEND_URL: import.meta.env.VITE_BACKEND_URL,
+        API_BASE_URL: API_BASE_URL
+      });
+      
+      console.log('Making request to:', `${API_BASE_URL}/signup`);
+      console.log('FormData contents:', Object.fromEntries(formData));
+      
+      const response = await fetch(`${API_BASE_URL}/signup`, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'include',
+        body: formData,
+      });
+      
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers));
+      
+      // IMPORTANT: Get response text first, then try to parse as JSON
+      const responseText = await response.text();
+      console.log('Raw response text:', responseText);
+      
+      let data;
+      try {
+        data = JSON.parse(responseText);
+        console.log('Parsed response data:', data);
+      } catch (parseError) {
+        console.error('Failed to parse JSON:', parseError);
+        console.error('Response was:', responseText);
+        throw new Error('Server returned invalid JSON: ' + responseText);
+      }
+      
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Log the full error response
+        console.error('Server error response:', data);
+        throw new Error(data.message || 'Signup failed');
       }
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.error('Non-JSON response:', textResponse);
-        throw new Error('Server returned non-JSON response. Check server logs.');
-      }
-      const data = await response.json();
-      console.log('Response data:', data);
+      
       if (data.success) {
         handleAuthSuccess(data, true);
       } else {
@@ -293,7 +309,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
         
         {/* Sign In Form */}
         {currentPage === 'signin' && (
-          <form onSubmit={handleSignIn} className="bg-white rounded-2xl shadow-xl p-8">
+          <div className="bg-white rounded-2xl shadow-xl p-8">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
               <p className="text-gray-600 mt-2">Sign in to your account</p>
@@ -339,19 +355,19 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
                 </div>
               </div>
               <button
-                type="submit"
+                onClick={handleSignIn}
                 disabled={isLoading || !signInData.email || !signInData.password}
                 className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? 'Signing In...' : 'Sign In'}
               </button>
             </div>
-          </form>
+          </div>
         )}
         
         {/* Sign Up Form */}
         {currentPage === 'signup' && (
-          <form onSubmit={handleSignUp} className="bg-white rounded-2xl shadow-xl p-8">
+          <div className="bg-white rounded-2xl shadow-xl p-8">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
               <p className="text-gray-600 mt-2">Join us today</p>
@@ -504,14 +520,14 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/auth`;
               </div>
               
               <button
-                type="submit"
+                onClick={handleSignUp}
                 disabled={isLoading || !signUpData.username || !signUpData.email || !signUpData.password || !signUpData.confirmPassword || !signUpData.gender || !signUpData.age}
                 className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? 'Creating Account...' : 'Create Account'}
               </button>
             </div>
-          </form>
+          </div>
         )}
       </div>
     </div>
