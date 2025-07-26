@@ -22,7 +22,8 @@ const app = express();
 const server = http.createServer(app);
 
 const allowedOrigins = [
-"https://lovevault.onrender.com/",
+  
+"https://lovevault.onrender.com",
   process.env.CLIENT_URL
 ].filter(Boolean);
 
@@ -110,7 +111,8 @@ app.use((err, req, res, next) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: 'How are you here? This route does not exist.',
+    timestamp: new Date()
   });
 });
 
