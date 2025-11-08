@@ -2,23 +2,21 @@ import React, { useState, useEffect } from 'react';
 import HomePage from './HomePage';
 import SecureRoomPortal from './SecureRoomPortal';
 import AuthPage from '../context/AuthPage';
-import LoveChat from './LoveChat'; // Import your LoveChat component
-import { useNavigate } from 'react-router-dom';
-import GameCenter from './GameCenter'; // Import GameCenter component
+import LoveChat from './LoveChat';
+import GameCenter from './GameCenter';
 
 const PrivacyChatApp = () => {
   const [currentView, setCurrentView] = useState('home');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingRedirect, setPendingRedirect] = useState(false);
-  const [chatRoomData, setChatRoomData] = useState(null); // Store chat room data
+  const [chatRoomData, setChatRoomData] = useState(null);
 
-  // Function to check if user is authenticated
   const checkAuthentication = () => {
     try {
       const token = localStorage.getItem('authToken');
       const userData = localStorage.getItem('userData');
-      
+
       if (token && userData) {
         try {
           JSON.parse(userData);
@@ -29,21 +27,18 @@ const PrivacyChatApp = () => {
           return false;
         }
       }
-      
       return false;
     } catch (error) {
-      console.error('Error checking authentication:', error);
+      console.error('Auth check error:', error);
       return false;
     }
   };
 
-  // Get user data from storage
   const getUserData = () => {
     try {
       const userData = localStorage.getItem('userData');
       return userData ? JSON.parse(userData) : null;
     } catch (error) {
-      console.error('Error parsing user data:', error);
       return null;
     }
   };
@@ -53,7 +48,6 @@ const PrivacyChatApp = () => {
       const roomData = localStorage.getItem('activeRoomData');
       return roomData ? JSON.parse(roomData) : null;
     } catch (error) {
-      console.error('Error parsing room data:', error);
       return null;
     }
   };
@@ -62,7 +56,7 @@ const PrivacyChatApp = () => {
     try {
       localStorage.setItem('activeRoomData', JSON.stringify(roomData));
     } catch (error) {
-      console.error('Error saving room data:', error);
+      console.error('Save room error:', error);
     }
   };
 
@@ -70,40 +64,50 @@ const PrivacyChatApp = () => {
     try {
       localStorage.removeItem('activeRoomData');
     } catch (error) {
-      console.error('Error clearing room data:', error);
+      console.error('Clear room error:', error);
     }
   };
 
-  const navigateToSecureRoom = async () => {
-    setIsLoading(true);
-    
-    try {
+  useEffect(() => {
+    const initializeAuth = () => {
       const authenticated = checkAuthentication();
-      
+      setIsAuthenticated(authenticated);
+
       if (authenticated) {
-        setIsAuthenticated(true);
-        setCurrentView('secure-room');
-        setPendingRedirect(false);
-      } else {
-        setIsAuthenticated(false);
-        setPendingRedirect(true);
-        setCurrentView('auth');
+        const persistedRoomData = getPersistedRoomData();
+        if (persistedRoomData) {
+          setChatRoomData(persistedRoomData);
+          setCurrentView('chat');
+        }
       }
-    } catch (error) {
-      console.error('Authentication check failed:', error);
+
+      setIsLoading(false);
+    };
+
+    setTimeout(initializeAuth, 100);
+  }, []);
+
+  const navigateToSecureRoom = () => {
+    setIsLoading(true);
+
+    const authenticated = checkAuthentication();
+
+    if (authenticated) {
+      setIsAuthenticated(true);
+      setCurrentView('secure-room');
+      setPendingRedirect(false);
+    } else {
       setIsAuthenticated(false);
       setPendingRedirect(true);
       setCurrentView('auth');
-    } finally {
-      setIsLoading(false);
     }
+
+    setIsLoading(false);
   };
 
-  // Handle successful authentication
   const handleAuthSuccess = (userData) => {
-    console.log('Authentication successful:', userData);
     setIsAuthenticated(true);
-    
+
     if (pendingRedirect) {
       setCurrentView('secure-room');
       setPendingRedirect(false);
@@ -113,24 +117,17 @@ const PrivacyChatApp = () => {
   };
 
   const handleLogout = () => {
-    try {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('userData');
-      clearRoomData(); // Clear room data on logout
-      
-      setIsAuthenticated(false);
-      setPendingRedirect(false);
-      setChatRoomData(null); 
-      setCurrentView('home');
-      
-      console.log('User logged out successfully');
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('userData');
+    clearRoomData();
+
+    setIsAuthenticated(false);
+    setPendingRedirect(false);
+    setChatRoomData(null);
+    setCurrentView('home');
   };
 
   const navigateToHome = () => {
-    // Only go to home if no active room
     const persistedRoomData = getPersistedRoomData();
     if (persistedRoomData && isAuthenticated) {
       setCurrentView('chat');
@@ -142,89 +139,30 @@ const PrivacyChatApp = () => {
     }
   };
 
-  const navigateToAuth = () => {
-    setCurrentView('auth');
-  };
-
   const handleJoinChat = (roomData) => {
-    console.log('Joining chat with room data:', roomData);
     setChatRoomData(roomData);
-    saveRoomData(roomData); // Persist room data
+    saveRoomData(roomData);
     setCurrentView('chat');
   };
 
   const handleLeaveChat = () => {
     setChatRoomData(null);
-    clearRoomData(); // Clear persisted room data
+    clearRoomData();
     setCurrentView('secure-room');
   };
 
-  // ADD THIS FUNCTION - This was missing!
   const handleNavigateToGame = () => {
-    console.log('Navigating to game center...');
     setCurrentView('game-center');
   };
 
-  const handleAuthNavigation = (path) => {
-    if (path === '/') {
-      navigateToHome();
-    } else if (path === '/secure-room') {
-      if (isAuthenticated) {
-        setCurrentView('secure-room');
-      } else {
-        navigateToSecureRoom();
-      }
+  const handleNavigateBack = () => {
+    if (chatRoomData) {
+      setCurrentView('chat');
+    } else {
+      setCurrentView('secure-room');
     }
   };
 
-  useEffect(() => {
-    const initializeAuth = () => {
-      const authenticated = checkAuthentication();
-      setIsAuthenticated(authenticated);
-      
-      if (authenticated) {
-        // Check if user has an active room
-        const persistedRoomData = getPersistedRoomData();
-        if (persistedRoomData) {
-          setChatRoomData(persistedRoomData);
-          setCurrentView('chat');
-          console.log('User has active room, redirecting to chat');
-        } else {
-          console.log('User is authenticated but no active room');
-        }
-      } else {
-        console.log('User is not authenticated');
-      }
-      
-      setIsLoading(false);
-    };
-
-    setTimeout(initializeAuth, 100);
-  }, []);
-
-  // Listen for authentication state changes
-  useEffect(() => {
-    const handleAuthStateChange = () => {
-      const authenticated = checkAuthentication();
-      setIsAuthenticated(authenticated);
-      
-      if (!authenticated && (currentView === 'secure-room' || currentView === 'chat')) {
-        setCurrentView('home');
-        setPendingRedirect(false);
-        setChatRoomData(null);
-      }
-    };
-
-    window.addEventListener('authStateChanged', handleAuthStateChange);
-    window.addEventListener('storage', handleAuthStateChange);
-
-    return () => {
-      window.removeEventListener('authStateChanged', handleAuthStateChange);
-      window.removeEventListener('storage', handleAuthStateChange);
-    };
-  }, [currentView]);
-
-  // Loading state
   if (isLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -240,27 +178,23 @@ const PrivacyChatApp = () => {
   return (
     <div className="min-h-screen">
       {currentView === 'home' && (
-        <HomePage 
+        <HomePage
           onNavigateToSecureRoom={navigateToSecureRoom}
-          onNavigateToAuth={navigateToAuth}
-          isAuthenticated={isAuthenticated}
-          userData={getUserData()}
         />
       )}
-      
+
       {currentView === 'auth' && (
-        <AuthPage 
+        <AuthPage
           initialPage="signin"
-          onNavigate={handleAuthNavigation}
           onAuthSuccess={handleAuthSuccess}
           pendingRedirect={pendingRedirect}
         />
       )}
-      
+
       {currentView === 'secure-room' && isAuthenticated && (
-        <SecureRoomPortal 
+        <SecureRoomPortal
           onNavigateHome={navigateToHome}
-          onJoinChat={handleJoinChat} // ✅ Now properly passing onJoinChat
+          onJoinChat={handleJoinChat}
           userEmail={getUserData()?.email}
           onLogout={handleLogout}
           userData={getUserData()}
@@ -268,41 +202,32 @@ const PrivacyChatApp = () => {
       )}
 
       {currentView === 'chat' && isAuthenticated && chatRoomData && (
-        <LoveChat 
+        <LoveChat
           roomData={chatRoomData}
           userData={getUserData()}
           onLeaveChat={handleLeaveChat}
           onNavigateHome={navigateToHome}
-          onNavigateToGame={handleNavigateToGame} // ✅ Now properly defined
+          onNavigateToGame={handleNavigateToGame}
         />
       )}
 
-      {/* ADD THIS - GameCenter view */}
       {currentView === 'game-center' && isAuthenticated && (
-        <GameCenter 
+        <GameCenter
           userData={getUserData()}
           roomData={chatRoomData}
-          onNavigateBack={() => {
-            // Go back to chat if there's an active room, otherwise go to secure room
-            if (chatRoomData) {
-              setCurrentView('chat');
-            } else {
-              setCurrentView('secure-room');
-            }
-          }}
+          onNavigateBack={handleNavigateBack}
           onNavigateHome={navigateToHome}
         />
       )}
-      
-      {/* Fallback for when user tries to access secure room without auth */}
+
       {currentView === 'secure-room' && !isAuthenticated && (
         <div className="min-h-screen bg-black flex items-center justify-center">
           <div className="text-center">
             <div className="text-red-500 text-6xl mb-4">🔒</div>
             <h2 className="text-white text-2xl font-mono mb-4">ACCESS DENIED</h2>
             <p className="text-gray-400 mb-8">Please sign in to access the secure room</p>
-            <button 
-              onClick={navigateToAuth}
+            <button
+              onClick={() => setCurrentView('auth')}
               className="px-6 py-3 bg-pink-600 text-white rounded-lg font-mono hover:bg-pink-700 transition-colors"
             >
               SIGN IN
