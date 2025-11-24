@@ -7,12 +7,11 @@ const loveRoomSchema = new mongoose.Schema({
     unique: true,
     trim: true,
     uppercase: true,
-    // Updated to support both formats: 6-char (XXXXXX) and 12-char (XXXX-XXXX-XXXX)
     match: [/^([A-Z0-9]{6}|[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})$/, 'Invalid code format']
   },
   creator: {
     userId: {
-      type: mongoose.Schema.Types.Mixed, // Changed from ObjectId to Mixed
+      type: mongoose.Schema.Types.Mixed, 
       required: [true, 'Creator user ID is required']
     },
     email: {
@@ -31,7 +30,7 @@ const loveRoomSchema = new mongoose.Schema({
   },
   joiner: {
     userId: {
-      type: mongoose.Schema.Types.Mixed, // Changed from ObjectId to Mixed
+      type: mongoose.Schema.Types.Mixed, 
       default: null
     },
     email: {
@@ -50,6 +49,18 @@ const loveRoomSchema = new mongoose.Schema({
       default: null
     }
   },
+  lastActiveAt: {
+  type: Date,
+  default: null
+},
+sessionDuration: {
+  type: Number, // in milliseconds
+  default: 0
+},
+isSessionActive: {
+  type: Boolean,
+  default: false
+},
   isActive: {
     type: Boolean,
     default: true
@@ -260,6 +271,19 @@ loveRoomSchema.statics.cleanupExpiredRooms = async function() {
     console.error('Error cleaning up expired rooms:', error);
     throw error;
   }
+};
+
+loveRoomSchema.virtual('canResumeSession').get(function() {
+  if (!this.lastActiveAt || !this.isSessionActive) return false;
+  const hoursSinceActive = (Date.now() - this.lastActiveAt.getTime()) / (1000 * 60 * 60);
+  return hoursSinceActive < 24; // Sessions can be resumed within 24 hours
+});
+
+// Add this method to track session activity
+loveRoomSchema.methods.updateSessionActivity = function() {
+  this.lastActiveAt = new Date();
+  this.isSessionActive = true;
+  return this.save();
 };
 
 // Virtual to get room age in days

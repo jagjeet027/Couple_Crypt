@@ -173,6 +173,91 @@ export const initializeSocket = (io) => {
         });
       }
     });
+    socket.on('offer', async (data) => {
+  try {
+    const { roomCode, offer, callType } = data;
+    
+    // Broadcast offer to other users in room
+    socket.to(roomCode).emit('receive-offer', {
+      senderId: socket.user.id,
+      offer,
+      callType
+    });
+    
+    // Save call initiation to database
+    const callMessage = new Message({
+      roomId: roomCode,
+      senderId: socket.user.id,
+      message: `${callType} call initiated`,
+      messageType: 'call',
+      callData: {
+        callType,
+        status: 'initiated'
+      }
+    });
+    await callMessage.save();
+    
+  } catch (error) {
+    socket.emit('call-error', { error: error.message });
+  }
+});
+
+socket.on('answer', async (data) => {
+  try {
+    const { roomCode, answer } = data;
+    
+    socket.to(roomCode).emit('receive-answer', {
+      senderId: socket.user.id,
+      answer
+    });
+    
+  } catch (error) {
+    socket.emit('call-error', { error: error.message });
+  }
+});
+
+socket.on('ice-candidate', (data) => {
+  try {
+    const { roomCode, candidate } = data;
+    
+    socket.to(roomCode).emit('receive-ice-candidate', {
+      senderId: socket.user.id,
+      candidate
+    });
+    
+  } catch (error) {
+    socket.emit('call-error', { error: error.message });
+  }
+});
+
+socket.on('call-end', async (data) => {
+  try {
+    const { roomCode, duration } = data;
+    
+    socket.to(roomCode).emit('call-ended', {
+      endedBy: socket.user.id,
+      duration
+    });
+    
+    // Update call message with duration
+    await Message.updateOne(
+      { 
+        roomId: roomCode, 
+        'callData.status': { $in: ['initiated', 'accepted'] }
+      },
+      { 
+        $set: { 
+          'callData.status': 'ended',
+          'callData.duration': duration,
+          message: `Call ended (${Math.floor(duration/60)}:${(duration%60).toString().padStart(2,'0')})`
+        }
+      }
+    );
+    
+  } catch (error) {
+    socket.emit('call-error', { error: error.message });
+  }
+});
 
     socket.on('end-call', async (data) => {
       try {

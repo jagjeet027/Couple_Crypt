@@ -43,6 +43,14 @@ const userSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  resetToken: {
+    type: String,
+    default: undefined
+  },
+  resetTokenExpiry: {
+    type: Date,
+    default: undefined
   }
 }, {
   timestamps: true
@@ -51,6 +59,7 @@ const userSchema = new mongoose.Schema({
 // Index for faster queries
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });
+userSchema.index({ resetToken: 1 });
 
 const User = mongoose.model('User', userSchema);
 

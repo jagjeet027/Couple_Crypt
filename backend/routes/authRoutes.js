@@ -4,8 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { signup, login, signout, verifyToken, refreshToken } from '../controllers/authController.js';
-import  authenticateToken  from '../middleware/auth.js';
+import { signup, login, signout, verifyToken, refreshToken, forgotPassword, resetPassword } from '../controllers/authController.js';
+import authenticateToken from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -22,10 +22,9 @@ if (!fs.existsSync(uploadsDir)) {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, uploadsDir); // Save to uploads directory
+    cb(null, uploadsDir);
   },
   filename: function (req, file, cb) {
-    // Generate unique filename: timestamp-originalname
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
     cb(null, `profile-${uniqueSuffix}${ext}`);
@@ -54,7 +53,7 @@ const upload = multer({
   fileFilter: fileFilter
 });
 
-// Add error handling middleware for multer
+// Error handling middleware for multer
 const handleMulterError = (error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -85,27 +84,7 @@ router.post('/login', login);
 router.post('/signout', authenticateToken, signout);
 router.get('/verify', verifyToken);
 router.post('/refresh', refreshToken);
-
-// Test route for debugging
-router.post('/test', upload.single('profileImage'), (req, res) => {
-  console.log('Test route hit');
-  console.log('Request body:', req.body);
-  console.log('Request file:', req.file);
-  console.log('Content-Type:', req.headers['content-type']);
-  
-  res.json({
-    success: true,
-    message: 'Test route working',
-    receivedData: {
-      body: req.body,
-      file: req.file ? {
-        filename: req.file.filename,
-        originalname: req.file.originalname,
-        size: req.file.size
-      } : 'No file',
-      contentType: req.headers['content-type']
-    }
-  });
-});
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 
 export default router;

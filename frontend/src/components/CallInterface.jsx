@@ -189,34 +189,27 @@ const CallInterface = ({
   return (
     <div className="w-full h-full bg-gray-900 rounded-xl shadow-2xl border border-gray-700 overflow-hidden">
       {/* Header */}
-      <div className="bg-gray-900/90 backdrop-blur-sm p-4 flex items-center justify-between border-b border-gray-800">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center">
-            <Phone className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <h2 className="text-white text-lg font-bold">Call Interface</h2>
-            <p className="text-gray-400 text-sm">Room: {roomData?.roomCode}</p>
-          </div>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          {(isInCall || callStatus !== 'idle') && (
-            <button
-              onClick={toggleMinimize}
-              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              <Minimize2 className="w-5 h-5 text-gray-400" />
-            </button>
-          )}
-          <button
-            onClick={handleClose}
-            className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5 text-gray-400" />
-          </button>
-        </div>
-      </div>
+      <div className="flex items-center space-x-2">
+  <button
+    onClick={() => handleStartCall('audio')}
+    disabled={!isConnected || isInCall}
+    className="flex items-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition-colors text-sm"
+    title="Start Audio Call"
+  >
+    <Phone size={16} />
+    <span className="hidden sm:inline">Audio</span>
+  </button>
+  
+  <button
+    onClick={() => handleStartCall('video')}
+    disabled={!isConnected || isInCall}
+    className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors text-sm"
+    title="Start Video Call"
+  >
+    <Video size={16} />
+    <span className="hidden sm:inline">Video</span>
+  </button>
+</div>
 
       {/* Main Content Area */}
       <div className="h-96 flex flex-col">

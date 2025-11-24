@@ -15,6 +15,7 @@ import {
   Key,
   Clock
 } from 'lucide-react';
+import { ActiveSessionsPanel } from './ActiveSessionsPanel';
 
 const SecureRoomPortal = ({ 
   onNavigateHome, 
@@ -38,6 +39,7 @@ const SecureRoomPortal = ({
   const [showCodePopup, setShowCodePopup] = useState(false);
   const [popupTimer, setPopupTimer] = useState(15);
   const [timeRemaining, setTimeRemaining] = useState(null);
+  const [showActiveSessions, setShowActiveSessions] = useState(false);
 
   // Configuration
 const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
