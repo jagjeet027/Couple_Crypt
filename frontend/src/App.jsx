@@ -5,6 +5,7 @@ import AuthPage from './context/AuthPage.jsx';
 import SecureRoomPortal from './components/SecureRoomPortal.jsx';
 import LoveChat from './components/LoveChat.jsx';
 import GameCenter from './components/GameCenter.jsx';
+import Profile from './components/page/Profile.jsx';
 
 // Home Page Wrapper
 function HomePageWrapper() {
@@ -221,8 +222,8 @@ function App() {
 
         {/* Secure Room */}
         <Route path="/secure-room" element={<SecureRoomWrapper />} />
-
-        {/* Chat */}
+        <Route path = "/profile" element={<Profile/>}/>
+         {/* Chat */}
         <Route path="/chat" element={<ChatWrapper />} />
 
         {/* Game Center */}

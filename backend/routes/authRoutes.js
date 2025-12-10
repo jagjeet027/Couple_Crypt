@@ -4,7 +4,17 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { signup, login, signout, verifyToken, refreshToken, forgotPassword, resetPassword } from '../controllers/authController.js';
+import { 
+  signup, 
+  login, 
+  signout, 
+  verifyToken, 
+  refreshToken, 
+  forgotPassword, 
+  resetPassword,
+  updateProfile, 
+  getProfile 
+} from '../controllers/authController.js';
 import authenticateToken from '../middleware/auth.js';
 
 const router = express.Router();
@@ -78,13 +88,35 @@ const handleMulterError = (error, req, res, next) => {
   next(error);
 };
 
-// Routes
+// ============ AUTH ROUTES ============
+
+// Signup with profile image
 router.post('/signup', upload.single('profileImage'), handleMulterError, signup);
+
+// Login
 router.post('/login', login);
+
+// Signout
 router.post('/signout', authenticateToken, signout);
+
+// Verify Token
 router.get('/verify', verifyToken);
+
+// Refresh Token
 router.post('/refresh', refreshToken);
+
+// Forgot Password
 router.post('/forgot-password', forgotPassword);
+
+// Reset Password
 router.post('/reset-password', resetPassword);
+
+// ============ PROFILE ROUTES ============
+
+// Get current user profile
+router.get('/user/profile', authenticateToken, getProfile);
+
+// Update user profile
+router.put('/user/update-profile', authenticateToken, upload.single('profileImage'), handleMulterError, updateProfile);
 
 export default router;

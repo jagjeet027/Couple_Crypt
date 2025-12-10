@@ -616,3 +616,143 @@ export const refreshToken = async (req, res) => {
     res.status(401).json({ message: 'Invalid refresh token' });
   }
 };
+
+export const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { username, age, gender } = req.body;
+
+    // Validate inputs
+    if (!username || !age || !gender) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username, age, and gender are required'
+      });
+    }
+
+    // Validate age
+    const ageNum = parseInt(age);
+    if (isNaN(ageNum) || ageNum < 13 || ageNum > 120) {
+      return res.status(400).json({
+        success: false,
+        message: 'Age must be between 13 and 120'
+      });
+    }
+
+    // Validate gender
+    if (!['male', 'female', 'other'].includes(gender)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Gender must be male, female, or other'
+      });
+    }
+
+    // Check if username is already taken by another user
+    const existingUsername = await User.findOne({
+      username,
+      _id: { $ne: userId }
+    });
+
+    if (existingUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username already taken'
+      });
+    }
+
+    // Prepare update object
+    const updateData = {
+      username,
+      age: ageNum,
+      gender
+    };
+
+    // Handle profile image upload
+    if (req.file) {
+      updateData.profileImage = `/uploads/${req.file.filename}`;
+    }
+
+    // Update user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        user: {
+          id: updatedUser._id,
+          username: updatedUser.username,
+          email: updatedUser.email,
+          gender: updatedUser.gender,
+          age: updatedUser.age,
+          profileImage: updatedUser.profileImage
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Update profile error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error during profile update'
+    });
+  }
+};
+
+// @desc    Get user profile
+// @route   GET /api/user/profile
+// @access  Private
+export const getProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const user = await User.findById(userId).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user._id,
+          username: user.username,
+          email: user.email,
+          gender: user.gender,
+          age: user.age,
+          profileImage: user.profileImage,
+          createdAt: user.createdAt
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching profile'
+    });
+  }
+};
