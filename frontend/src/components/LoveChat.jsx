@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Heart, Smile, MoreVertical,
-  Edit3,Trash2,Copy,Check,CheckCheck,Shield,Wifi,WifiOff,User,Phone,LogOut,Video,PhoneOff,UserX
+  Edit3,Trash2,Copy,Check,CheckCheck,Shield,Wifi,WifiOff,User,Phone,LogOut,Video,PhoneOff,UserX,AlertCircle
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import CallInterface from './CallInterface';
@@ -30,6 +30,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const messageInputRef = useRef(null);
   const menuRef = useRef(null);
   const validationTimeoutRef = useRef(null);
+  const hasValidatedRoom = useRef(false);
 
 const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
 const SOCKET_URL = import.meta.env.VITE_BACKEND_URL;
@@ -49,6 +50,28 @@ const SOCKET_URL = import.meta.env.VITE_BACKEND_URL;
     setTimeout(() => setSuccess(''), duration);
   };
 
+  useEffect(() => {
+  if (hasValidatedRoom.current) {
+    return;
+  }
+
+  const initialValidation = async () => {
+    console.log('🔐 Starting initial room validation...');
+    hasValidatedRoom.current = true;  // ← MARK AS DONE
+    
+    if (roomData && userData) {
+      const isValid = await validateRoomAccess();
+      if (!isValid) {
+        setIsValidating(false);
+        return;
+      }
+    }
+    
+    setIsValidating(false);
+  };
+
+  initialValidation();
+}, [roomData, userData]);
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -86,7 +109,8 @@ const SOCKET_URL = import.meta.env.VITE_BACKEND_URL;
       }
 
       const userId = userData.id || userData.email;
-      const url = `${API_BASE_URL}/love-room/rooms/status/${roomData.roomCode}?userId=${encodeURIComponent(userId)}`;
+     const url = `${API_BASE_URL}/love-room/rooms/status/${roomData.roomCode}?userId=...`;
+//                                                     ^^^^^^^^^^^ CORRECT! 
       
       console.log('Validating room access:', { 
         roomCode: roomData.roomCode, 
@@ -655,26 +679,24 @@ const SOCKET_URL = import.meta.env.VITE_BACKEND_URL;
     return roomData.isCreator ? 'Partner' : 'Creator';
   };
 
-  // Show loading screen while validating room
-  if (!roomValidated) {
-    return (
-      <div className="h-screen bg-black flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <Heart className="w-8 h-8 text-white" />
-          </div>
-          <p className="text-white text-lg font-mono">Connecting to Love Room...</p>
-          <p className="text-gray-400 text-sm mt-2">Validating access permissions</p>
-          {error && (
-            <div className="mt-4 p-3 bg-red-900/50 border border-red-500/30 rounded-lg">
-              <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          )}
-        </div>
+ 
+if (!roomValidated) {
+  return (
+    <div className="h-screen bg-black flex items-center justify-center">
+      <div className="text-center">
+        <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+        <p className="text-white text-lg font-mono mb-2">Room Validation Failed</p>
+        <p className="text-gray-400 text-sm mb-6">{error}</p>
+        <button
+          onClick={onNavigateHome}
+          className="px-6 py-2 bg-pink-600 text-white rounded-lg font-bold"
+        >
+          Go Back Home
+        </button>
       </div>
-    );
-  }
-
+    </div>
+  );
+}
   return (
     <div className="h-screen bg-black flex flex-col relative">
       

@@ -50,17 +50,17 @@ const loveRoomSchema = new mongoose.Schema({
     }
   },
   lastActiveAt: {
-  type: Date,
-  default: null
-},
-sessionDuration: {
-  type: Number, // in milliseconds
-  default: 0
-},
-isSessionActive: {
-  type: Boolean,
-  default: false
-},
+    type: Date,
+    default: null
+  },
+  sessionDuration: {
+    type: Number,
+    default: 0
+  },
+  isSessionActive: {
+    type: Boolean,
+    default: false
+  },
   isActive: {
     type: Boolean,
     default: true
@@ -72,13 +72,7 @@ isSessionActive: {
   expiresAt: {
     type: Date,
     required: true,
-    index: { expireAfterSeconds: 0 } // MongoDB TTL index for auto-deletion
-  },
-  roomId: {
-    type: String,
-    default: null,
-    unique: true,
-    sparse: true // Allow multiple null values
+    index: { expireAfterSeconds: 0 }
   },
   status: {
     type: String,
@@ -89,6 +83,10 @@ isSessionActive: {
   timestamps: true
 });
 
+// ============ IMPORTANT: Fix the roomId issue ============
+// Remove the unique sparse index on roomId since it causes duplicate null errors
+// Instead, we'll use the code as the unique identifier (which is already unique)
+
 // Indexes for better performance
 loveRoomSchema.index({ code: 1 });
 loveRoomSchema.index({ 'creator.userId': 1 });
@@ -98,11 +96,15 @@ loveRoomSchema.index({ isActive: 1 });
 loveRoomSchema.index({ expiresAt: 1 });
 loveRoomSchema.index({ status: 1 });
 
-// Pre-save middleware to generate roomId when room becomes active
+// Remove this index if it exists in your database!
+// loveRoomSchema.index({ roomId: 1 }, { unique: true, sparse: true });
+// Instead use compound index for better query performance
+loveRoomSchema.index({ code: 1, status: 1 });
+
+// Pre-save middleware
 loveRoomSchema.pre('save', function(next) {
-  if (this.roomActive && !this.roomId) {
-    this.roomId = `room_${this.code.replace(/-/g, '')}_${Date.now()}`;
-  }
+  // Don't generate roomId - use code as identifier
+  // This prevents the null roomId duplicate key issue
   
   // Auto-generate creator name if not provided
   if (this.creator && this.creator.email && !this.creator.name) {
@@ -117,7 +119,7 @@ loveRoomSchema.pre('save', function(next) {
   next();
 });
 
-// Static method to generate unique code (supports both formats)
+// Static method to generate unique code
 loveRoomSchema.statics.generateUniqueCode = async function(format = 'long') {
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let code;
@@ -127,12 +129,12 @@ loveRoomSchema.statics.generateUniqueCode = async function(format = 'long') {
     code = '';
     
     if (format === 'short') {
-      // Generate 6-character code for SecureRoomPortal
+      // Generate 6-character code
       for (let i = 0; i < 6; i++) {
         code += characters.charAt(Math.floor(Math.random() * characters.length));
       }
     } else {
-      // Generate 12-character code with dashes (legacy format)
+      // Generate 12-character code with dashes
       for (let i = 0; i < 12; i++) {
         code += characters.charAt(Math.floor(Math.random() * characters.length));
         if (i === 3 || i === 7) code += '-';
@@ -149,26 +151,13 @@ loveRoomSchema.statics.generateUniqueCode = async function(format = 'long') {
   return code;
 };
 
-// Static method to generate 6-character code specifically for SecureRoomPortal
+// Static method to generate short code (6 chars)
 loveRoomSchema.statics.generateShortCode = async function() {
   return await this.generateUniqueCode('short');
 };
 
-// Updated: Get all user rooms (removed active-only restriction)
-loveRoomSchema.statics.getUserRooms = async function(userId) {
-  try {
-    return await this.find({
-      'creator.userId': userId
-    }).sort({ createdAt: -1 });
-  } catch (error) {
-    console.error('Error in getUserRooms:', error);
-    return [];
-  }
-};
-
 // Static method to validate and get code
 loveRoomSchema.statics.validateCode = async function(code) {
-  // Normalize code format (remove spaces, convert to uppercase)
   const normalizedCode = code.trim().toUpperCase();
   
   const loveRoom = await this.findOne({ code: normalizedCode });
@@ -178,7 +167,6 @@ loveRoomSchema.statics.validateCode = async function(code) {
   }
   
   if (Date.now() > loveRoom.expiresAt) {
-    // Update status to expired
     loveRoom.status = 'expired';
     loveRoom.isActive = false;
     await loveRoom.save();
@@ -204,7 +192,7 @@ loveRoomSchema.statics.validateCode = async function(code) {
   return { valid: true, loveRoom };
 };
 
-// Instance method to connect hearts (updated to handle name parameter)
+// Instance method to connect hearts
 loveRoomSchema.methods.connectHearts = function(joinerId, joinerEmail, joinerName = null) {
   this.joiner.userId = joinerId;
   this.joiner.email = joinerEmail;
@@ -225,30 +213,45 @@ loveRoomSchema.methods.cancelRoom = function() {
   return this.save();
 };
 
-// Instance method to extend expiry time
+// Instance method to extend expiry
 loveRoomSchema.methods.extendExpiry = function(additionalDays = 30) {
-  const additionalTime = additionalDays * 24 * 60 * 60 * 1000; // Convert to milliseconds
+  const additionalTime = additionalDays * 24 * 60 * 60 * 1000;
   this.expiresAt = new Date(this.expiresAt.getTime() + additionalTime);
   
   return this.save();
 };
 
-// Instance method to check if room is expired
+// Instance method to check if expired
 loveRoomSchema.methods.isExpired = function() {
   return Date.now() > this.expiresAt;
 };
 
-// Instance method to get time remaining in milliseconds
+// Instance method to get time remaining
 loveRoomSchema.methods.getTimeRemaining = function() {
   return Math.max(0, this.expiresAt.getTime() - Date.now());
 };
 
-// Helper method to check if userId is ObjectId or string
+// Static method to validate ObjectId
 loveRoomSchema.statics.isValidObjectId = function(id) {
   return mongoose.Types.ObjectId.isValid(id);
 };
 
-// Static method to clean up expired rooms (useful for maintenance)
+// Static method to get user rooms
+loveRoomSchema.statics.getUserRooms = async function(userId) {
+  try {
+    return await this.find({
+      $or: [
+        { 'creator.userId': userId },
+        { 'joiner.userId': userId }
+      ]
+    }).sort({ createdAt: -1 });
+  } catch (error) {
+    console.error('Error in getUserRooms:', error);
+    return [];
+  }
+};
+
+// Static method to cleanup expired rooms
 loveRoomSchema.statics.cleanupExpiredRooms = async function() {
   try {
     const result = await this.updateMany(
@@ -273,25 +276,26 @@ loveRoomSchema.statics.cleanupExpiredRooms = async function() {
   }
 };
 
+// Virtual for canResumeSession
 loveRoomSchema.virtual('canResumeSession').get(function() {
   if (!this.lastActiveAt || !this.isSessionActive) return false;
   const hoursSinceActive = (Date.now() - this.lastActiveAt.getTime()) / (1000 * 60 * 60);
-  return hoursSinceActive < 24; // Sessions can be resumed within 24 hours
+  return hoursSinceActive < 24;
 });
 
-// Add this method to track session activity
+// Instance method to update session activity
 loveRoomSchema.methods.updateSessionActivity = function() {
   this.lastActiveAt = new Date();
   this.isSessionActive = true;
   return this.save();
 };
 
-// Virtual to get room age in days
+// Virtual for room age in days
 loveRoomSchema.virtual('ageInDays').get(function() {
   return Math.floor((Date.now() - this.createdAt.getTime()) / (1000 * 60 * 60 * 24));
 });
 
-// Virtual to get formatted code (adds dashes for display if it's a 6-char code)
+// Virtual for formatted code
 loveRoomSchema.virtual('formattedCode').get(function() {
   if (this.code.length === 6) {
     return `${this.code.slice(0, 2)}-${this.code.slice(2, 4)}-${this.code.slice(4, 6)}`;
@@ -299,7 +303,7 @@ loveRoomSchema.virtual('formattedCode').get(function() {
   return this.code;
 });
 
-// Ensure virtuals are included in JSON output
+// Set virtuals in JSON output
 loveRoomSchema.set('toJSON', { virtuals: true });
 loveRoomSchema.set('toObject', { virtuals: true });
 

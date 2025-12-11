@@ -1,11 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import HomePage from './components/HomePage.jsx';
 import AuthPage from './context/AuthPage.jsx';
 import SecureRoomPortal from './components/SecureRoomPortal.jsx';
 import LoveChat from './components/LoveChat.jsx';
 import GameCenter from './components/GameCenter.jsx';
 import Profile from './components/page/Profile.jsx';
+
+// Protected Route Component
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem('authToken');
+  if (!token) {
+    return <Navigate to="/auth" replace />;
+  }
+  return children;
+}
 
 // Home Page Wrapper
 function HomePageWrapper() {
@@ -14,14 +23,14 @@ function HomePageWrapper() {
   const handleNavigateToSecureRoom = () => {
     const token = localStorage.getItem('authToken');
     if (token) {
-      navigate('/secure-room');
+      navigate('/secure-room', { replace: true });
     } else {
-      navigate('/auth');
+      navigate('/auth', { replace: true });
     }
   };
 
   const handleNavigateToGame = () => {
-    navigate('/game-center');
+    navigate('/game-center', { replace: true });
   };
 
   return (
@@ -37,14 +46,14 @@ function AuthPageWrapper() {
   const navigate = useNavigate();
   
   const handleAuthSuccess = () => {
-    navigate('/secure-room');
+    navigate('/secure-room', { replace: true });
   };
 
   return (
     <AuthPage
       initialPage="signin"
       onAuthSuccess={handleAuthSuccess}
-      onNavigate={(path) => navigate(path)}
+      onNavigate={(path) => navigate(path, { replace: true })}
     />
   );
 }
@@ -53,14 +62,14 @@ function SignupPageWrapper() {
   const navigate = useNavigate();
   
   const handleAuthSuccess = () => {
-    navigate('/secure-room');
+    navigate('/secure-room', { replace: true });
   };
 
   return (
     <AuthPage
       initialPage="signup"
       onAuthSuccess={handleAuthSuccess}
-      onNavigate={(path) => navigate(path)}
+      onNavigate={(path) => navigate(path, { replace: true })}
     />
   );
 }
@@ -68,21 +77,39 @@ function SignupPageWrapper() {
 // Secure Room Wrapper
 function SecureRoomWrapper() {
   const navigate = useNavigate();
-  const [chatRoomData, setChatRoomData] = useState(null);
+  const location = useLocation();
+  const [isNavigating, setIsNavigating] = useState(false);
 
   const handleNavigateHome = () => {
-    navigate('/');
+    setIsNavigating(true);
+    localStorage.removeItem('activeRoomData');
+    navigate('/', { replace: true });
   };
 
   const handleJoinChat = (roomData) => {
-    setChatRoomData(roomData);
-    navigate('/chat', { state: { roomData } });
+    // Prevent multiple navigations
+    if (isNavigating) {
+      console.warn('⚠️ Navigation already in progress - skipping');
+      return;
+    }
+
+    setIsNavigating(true);
+    console.log('📍 Navigating to chat with room:', roomData.roomCode);
+    localStorage.setItem('activeRoomData', JSON.stringify(roomData));
+    
+    // Use replace to prevent back button issues
+    navigate('/chat', { 
+      replace: true,
+      state: { roomData } 
+    });
   };
 
   const handleLogout = () => {
+    setIsNavigating(true);
     localStorage.removeItem('authToken');
     localStorage.removeItem('userData');
-    navigate('/');
+    localStorage.removeItem('activeRoomData');
+    navigate('/', { replace: true });
   };
 
   const userData = (() => {
@@ -108,40 +135,71 @@ function SecureRoomWrapper() {
 // Chat Wrapper
 function ChatWrapper() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [roomData, setRoomData] = useState(null);
+  const [isReady, setIsReady] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
 
   useEffect(() => {
-    // Try to get room data from state
-    const state = window.history.state?.state;
-    if (state?.roomData) {
-      setRoomData(state.roomData);
-    } else {
-      // Try to get from sessionStorage
-      const saved = sessionStorage.getItem('activeRoomData');
+    try {
+      // Get room data from state first
+      const state = location.state?.roomData;
+      
+      if (state) {
+        console.log('✅ Room data from navigation state:', state.roomCode);
+        setRoomData(state);
+        setIsReady(true);
+        return;
+      }
+
+      // Fallback to localStorage
+      const saved = localStorage.getItem('activeRoomData');
       if (saved) {
         try {
-          setRoomData(JSON.parse(saved));
-        } catch {
-          navigate('/secure-room');
+          const parsed = JSON.parse(saved);
+          console.log('✅ Room data from localStorage:', parsed.roomCode);
+          setRoomData(parsed);
+          setIsReady(true);
+          return;
+        } catch (e) {
+          console.error('❌ Failed to parse activeRoomData:', e);
+          localStorage.removeItem('activeRoomData');
         }
-      } else {
-        navigate('/secure-room');
       }
+
+      // No room data found
+      console.warn('❌ No room data found - redirecting to secure room');
+      setIsNavigating(true);
+      navigate('/secure-room', { replace: true });
+    } catch (error) {
+      console.error('❌ Error in ChatWrapper useEffect:', error);
+      localStorage.removeItem('activeRoomData');
+      setIsNavigating(true);
+      navigate('/secure-room', { replace: true });
     }
-  }, [navigate]);
+  }, [navigate, location.state]);
 
   const handleLeaveChat = () => {
-    sessionStorage.removeItem('activeRoomData');
-    navigate('/secure-room');
+    if (isNavigating) return;
+    
+    setIsNavigating(true);
+    localStorage.removeItem('activeRoomData');
+    navigate('/secure-room', { replace: true });
   };
 
   const handleNavigateHome = () => {
-    sessionStorage.removeItem('activeRoomData');
-    navigate('/');
+    if (isNavigating) return;
+    
+    setIsNavigating(true);
+    localStorage.removeItem('activeRoomData');
+    navigate('/', { replace: true });
   };
 
   const handleNavigateToGame = () => {
-    navigate('/game-center');
+    if (isNavigating) return;
+    
+    setIsNavigating(true);
+    navigate('/game-center', { replace: true });
   };
 
   const userData = (() => {
@@ -153,8 +211,24 @@ function ChatWrapper() {
     }
   })();
 
+  // Show loading while preparing
+  if (!isReady) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <span className="text-white text-2xl">💖</span>
+          </div>
+          <p className="text-white text-lg font-mono">Loading Love Room...</p>
+          <p className="text-gray-400 text-sm mt-2">Please wait...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Safety check - if still no room data, redirect
   if (!roomData) {
-    return <div className="min-h-screen bg-black flex items-center justify-center text-white">Loading...</div>;
+    return <Navigate to="/secure-room" replace />;
   }
 
   return (
@@ -171,6 +245,7 @@ function ChatWrapper() {
 // Game Center Wrapper
 function GameCenterWrapper() {
   const navigate = useNavigate();
+  const [isNavigating, setIsNavigating] = useState(false);
 
   const userData = (() => {
     try {
@@ -182,20 +257,24 @@ function GameCenterWrapper() {
   })();
 
   const handleNavigateBack = () => {
-    console.log('✅ Back button clicked - Going to previous page');
-    // Check if there's a room data, if yes go to chat, else go to home
-    const roomData = sessionStorage.getItem('activeRoomData');
+    if (isNavigating) return;
+    
+    setIsNavigating(true);
+    const roomData = localStorage.getItem('activeRoomData');
+    
     if (roomData) {
-      navigate('/chat');
+      navigate('/chat', { replace: true });
     } else {
-      navigate('/');
+      navigate('/secure-room', { replace: true });
     }
   };
 
   const handleNavigateHome = () => {
-    console.log('✅ Home button clicked - Going to home');
-    sessionStorage.removeItem('activeRoomData');
-    navigate('/');
+    if (isNavigating) return;
+    
+    setIsNavigating(true);
+    localStorage.removeItem('activeRoomData');
+    navigate('/', { replace: true });
   };
 
   return (
@@ -220,14 +299,45 @@ function App() {
         <Route path="/login" element={<AuthPageWrapper />} />
         <Route path="/signup" element={<SignupPageWrapper />} />
 
-        {/* Secure Room */}
-        <Route path="/secure-room" element={<SecureRoomWrapper />} />
-        <Route path = "/profile" element={<Profile/>}/>
-         {/* Chat */}
-        <Route path="/chat" element={<ChatWrapper />} />
+        {/* Secure Room - Protected */}
+        <Route 
+          path="/secure-room" 
+          element={
+            <ProtectedRoute>
+              <SecureRoomWrapper />
+            </ProtectedRoute>
+          } 
+        />
 
-        {/* Game Center */}
-        <Route path="/game-center" element={<GameCenterWrapper />} />
+        {/* Profile - Protected */}
+        <Route 
+          path="/profile" 
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Chat - Protected */}
+        <Route 
+          path="/chat" 
+          element={
+            <ProtectedRoute>
+              <ChatWrapper />
+            </ProtectedRoute>
+          } 
+        />
+
+        {/* Game Center - Protected */}
+        <Route 
+          path="/game-center" 
+          element={
+            <ProtectedRoute>
+              <GameCenterWrapper />
+            </ProtectedRoute>
+          } 
+        />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Heart, 
   Shield, 
@@ -13,9 +12,13 @@ import {
   Lock,
   Plus,
   Key,
-  Clock
+  Clock,
+  Trash2,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { ActiveSessionsPanel } from './ActiveSessionsPanel';
+import ActiveSessionsPopup from './ActiveSessionsPopup';
 
 const SecureRoomPortal = ({ 
   onNavigateHome, 
@@ -33,86 +36,46 @@ const SecureRoomPortal = ({
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [waitingForJoiner, setWaitingForJoiner] = useState(false);
-  const [roomStatus, setRoomStatus] = useState(null);
-  const [hasGeneratedCode, setHasGeneratedCode] = useState(false);
   const [showCodePopup, setShowCodePopup] = useState(false);
   const [popupTimer, setPopupTimer] = useState(15);
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [showActiveSessions, setShowActiveSessions] = useState(false);
+  const [showSessionsPopup, setShowSessionsPopup] = useState(false);
 
-  // Configuration
-const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
-  const CODE_EXPIRY_TIME = 30 * 24 * 60 * 60 * 1000; // 30 days
+  // Use ref to track if we've already checked (IMPORTANT FIX)
+  const hasCheckedActiveRoom = useRef(false);
 
-  // Initialize component
+  const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
+  const CODE_EXPIRY_TIME = 30 * 24 * 60 * 60 * 1000;
+
+  // Check if user already has an active room - RUN ONLY ONCE
   useEffect(() => {
-    checkForActiveRoom();
-  }, []);
+    // IMPORTANT: Check if we've already done this check
+    if (hasCheckedActiveRoom.current) {
+      return;
+    }
 
-  // Poll room status when waiting for joiner
-  useEffect(() => {
-    if (!waitingForJoiner || !roomCode) return;
+    // Mark that we've checked
+    hasCheckedActiveRoom.current = true;
 
-    const interval = setInterval(() => {
-      checkRoomStatus(roomCode);
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [waitingForJoiner, roomCode]);
-
-  // Check if user already has an active room
-  const checkForActiveRoom = () => {
     try {
       const activeRoomData = localStorage.getItem('activeRoomData');
       if (activeRoomData) {
-        const roomData = JSON.parse(activeRoomData);
-        console.log('User has active room, redirecting to chat');
-        onJoinChat(roomData);
+        try {
+          const roomData = JSON.parse(activeRoomData);
+          console.log('✅ Found active room:', roomData.roomCode);
+          // Show popup instead of redirecting immediately
+          setShowSessionsPopup(true);
+        } catch (parseError) {
+          console.error('❌ Invalid activeRoomData format:', parseError);
+          localStorage.removeItem('activeRoomData');
+        }
       }
     } catch (error) {
-      console.error('Error checking active room:', error);
+      console.error('❌ Error checking active room:', error);
       localStorage.removeItem('activeRoomData');
     }
-  };
-
-  // Check room status for waiting creator
-  const checkRoomStatus = async (code) => {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/love-room/rooms/status/${code}?userId=${userData.id || userData.email}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        }
-      );
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.data) {
-          const data = result.data;
-          setRoomStatus({
-            memberCount: data.joiner ? 2 : 1,
-            status: data.status,
-            timeRemaining: data.timeRemaining
-          });
-          
-          setTimeRemaining(data.timeRemaining);
-          
-          // If room has joiner, creator can join
-          if (data.joiner && data.status === 'connected') {
-            setSuccess('Partner joined! Entering the love room...');
-            setTimeout(() => {
-              handleJoinRoom(code, true);
-            }, 1500);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error checking room status:', error);
-    }
-  };
+  }, []); // Empty dependency - runs only once
 
   // Validate room code
   const validateCode = async (code) => {
@@ -129,7 +92,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
     }
   };
 
-  // Generate 6-character room code
+  // Generate random 6-character room code
   const generateRoomCode = () => {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
@@ -139,9 +102,12 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
     return result;
   };
 
-  // Create new room
+  // Create new room - UNLIMITED rooms allowed
   const createRoom = async () => {
-    if (!userData?.email || hasGeneratedCode) return;
+    if (!userData?.email) {
+      setError('User information is required');
+      return;
+    }
 
     setIsCreating(true);
     setError('');
@@ -170,32 +136,19 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
         throw new Error(data.message || 'Failed to create room');
       }
 
+      // Show popup with code
       setRoomCode(newRoomCode);
-      setHasGeneratedCode(true);
+      setShowCodePopup(true);
+      setPopupTimer(15);
       
-      // Save room data
-      const roomData = {
-        roomCode: newRoomCode,
-        userEmail: userData.email,
-        userName: userData.name || userData.email.split('@')[0],
-        isCreator: true,
-        userId: userData.id || userData.email,
-        roomId: data.data.roomId
-      };
-      
-      localStorage.setItem('activeRoomData', JSON.stringify(roomData));
-      
-      // Set expiry time from response
+      // Set expiry timer display
       if (data.data.expiresAt) {
         const expiryTime = new Date(data.data.expiresAt).getTime();
         const now = Date.now();
         setTimeRemaining(Math.max(0, expiryTime - now));
       }
       
-      // Show popup with countdown
-      setShowCodePopup(true);
-      setPopupTimer(15);
-      
+      // Auto-join after 15 seconds
       const timer = setInterval(() => {
         setPopupTimer(prev => {
           if (prev <= 1) {
@@ -216,7 +169,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
     }
   };
 
-  // Join existing room
+  // Join existing room - UNLIMITED rooms allowed
   const joinRoom = async () => {
     if (!joinCode.trim() || joinCode.trim().length !== 6 || !userData?.email) {
       setError('Please enter a valid 6-character room code');
@@ -225,16 +178,18 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
 
     setIsJoining(true);
     setError('');
+    setSuccess('');
 
     try {
       const cleanCode = joinCode.trim().toUpperCase();
       
-      // First validate the code
+      // Validate code first
       const validation = await validateCode(cleanCode);
       if (!validation.success) {
-        throw new Error(validation.message);
+        throw new Error(validation.message || 'Invalid room code');
       }
       
+      // Join the room
       const response = await fetch(`${API_BASE_URL}/love-room/rooms/join`, {
         method: 'POST',
         headers: {
@@ -256,6 +211,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
       }
 
       setSuccess('Joined successfully! Redirecting to LoveChat...');
+      setJoinCode('');
       
       setTimeout(() => {
         handleJoinRoom(cleanCode, false, data.data.roomId);
@@ -269,7 +225,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
     }
   };
 
-  // Handle joining room chat
+  // Handle joining room - save to localStorage
   const handleJoinRoom = (code, isCreator = false, roomId = null) => {
     const roomData = {
       roomCode: code,
@@ -280,7 +236,10 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
       roomId: roomId
     };
 
-    console.log('Joining room with data:', roomData);
+    console.log('📍 Joining room with data:', roomData);
+    localStorage.setItem('activeRoomData', JSON.stringify(roomData));
+    
+    // Call parent's onJoinChat - this will redirect
     onJoinChat(roomData);
   };
 
@@ -310,14 +269,12 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
     setError('');
     setSuccess('');
     setJoinCode('');
-    if (!hasGeneratedCode) {
-      setRoomCode('');
-    }
+    setRoomCode('');
   };
 
   // Format join code input
   const formatJoinCodeInput = (value) => {
-    return value.replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    return value.replace(/[^A-Z0-9]/g, '').slice(0, 6).toUpperCase();
   };
 
   // Format time remaining
@@ -402,17 +359,13 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
                   Skip ({popupTimer}s)
                 </button>
               </div>
-              
-              <div className="text-xs text-gray-500 font-mono">
-                Auto-entering chat in {popupTimer} seconds...
-              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Background Effects */}
-      <div className="fixed inset-0 opacity-20">
+      <div className="fixed inset-0 opacity-20 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-purple-900"></div>
         <div className="absolute top-10 left-10 text-4xl md:text-6xl text-pink-500 animate-bounce">💖</div>
         <div className="absolute top-20 right-20 text-3xl md:text-4xl text-purple-400" style={{animation: 'bounce 3s ease-in-out infinite 1s'}}>✨</div>
@@ -420,7 +373,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
         <div className="absolute bottom-10 right-10 text-2xl md:text-3xl text-purple-300" style={{animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite 1.5s'}}>🌹</div>
       </div>
 
-      {/* Header - Responsive */}
+      {/* Header */}
       <header className="relative z-20 p-4 md:p-6 border-b border-gray-800/50 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-2 md:space-x-4">
@@ -436,7 +389,15 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
           </div>
           
           <div className="flex items-center space-x-2 md:space-x-4">
-            {/* User Info */}
+            <button
+              onClick={() => setShowActiveSessions(true)}
+              className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs md:text-sm rounded-lg transition-colors flex items-center gap-2"
+              title="View Active Sessions"
+            >
+              <Clock className="w-4 h-4" />
+              <span className="hidden sm:inline">Sessions</span>
+            </button>
+
             <div className="flex items-center space-x-2 px-3 py-2 bg-gray-800/50 rounded-lg">
               <User className="w-4 h-4 text-pink-400" />
               <span className="text-xs md:text-sm text-gray-300 font-mono hidden sm:inline">
@@ -444,7 +405,6 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
               </span>
             </div>
             
-            {/* Logout Button */}
             <button
               onClick={onLogout}
               className="p-2 rounded-lg bg-red-900/30 hover:bg-red-800/50 transition-colors"
@@ -455,6 +415,22 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
           </div>
         </div>
       </header>
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-900/50 border-b border-red-500/30 p-3 relative z-[75] flex items-center gap-3">
+          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <p className="text-red-400 text-sm text-center font-mono flex-1">{error}</p>
+        </div>
+      )}
+
+      {/* Success Message */}
+      {success && (
+        <div className="bg-green-900/50 border-b border-green-500/30 p-3 relative z-[75] flex items-center gap-3">
+          <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+          <p className="text-green-400 text-sm text-center font-mono flex-1">{success}</p>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="relative z-10 pt-6 md:pt-12 pb-20 px-4 md:px-6">
@@ -472,7 +448,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
               </span>
             </h2>
             <p className="text-sm md:text-lg text-gray-400 max-w-2xl mx-auto px-4">
-              Create a secure room or join your partner's room to begin your encrypted love adventure.
+              Create unlimited secure rooms or join your partner's room to begin your encrypted love adventure.
               <br />
               <span className="text-pink-400 font-mono text-xs md:text-sm">Your privacy is our priority. Rooms expire in 30 days.</span>
             </p>
@@ -520,30 +496,35 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
                   <p className="text-gray-400 text-sm">
                     Generate a secure room code for you and your partner
                     <br />
-                    <span className="text-xs text-green-400">Expires in 30 days</span>
+                    <span className="text-xs text-green-400">✓ Create unlimited rooms!</span>
                   </p>
                 </div>
                 
-                {hasGeneratedCode && roomCode ? (
+                {roomCode && !showCodePopup ? (
                   <div className="space-y-6">
                     <CodeVisualization code={roomCode} />
                     
                     <div className="text-center">
                       <div className="bg-green-900/30 border border-green-500/30 rounded-lg p-4 mb-4">
-                        <p className="text-green-400 text-sm font-mono">✓ REDIRECTING TO LOVECHAT...</p>
+                        <p className="text-green-400 text-sm font-mono">✓ ROOM CREATED SUCCESSFULLY!</p>
                       </div>
                       
-                      <div className="flex items-center justify-center space-x-2">
-                        <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce"></div>
-                        <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                        <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                      </div>
+                      <button
+                        onClick={() => {
+                          setRoomCode('');
+                          setError('');
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold hover:from-pink-700 hover:to-purple-700 transition-all flex items-center justify-center space-x-2 mx-auto"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Create Another Room</span>
+                      </button>
                     </div>
                   </div>
                 ) : (
                   <button
                     onClick={createRoom}
-                    disabled={isCreating || hasGeneratedCode}
+                    disabled={isCreating}
                     className="w-full py-4 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold text-sm md:text-lg hover:from-pink-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3"
                   >
                     {isCreating ? (
@@ -559,12 +540,6 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
                       </>
                     )}
                   </button>
-                )}
-                
-                {error && (
-                  <div className="mt-4 bg-red-900/30 border border-red-500/30 rounded-lg p-4">
-                    <p className="text-red-400 text-sm font-mono text-center">{error}</p>
-                  </div>
                 )}
               </div>
             </div>
@@ -592,7 +567,7 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
                     <input
                       type="text"
                       value={joinCode}
-                      onChange={(e) => setJoinCode(formatJoinCodeInput(e.target.value.toUpperCase()))}
+                      onChange={(e) => setJoinCode(formatJoinCodeInput(e.target.value))}
                       placeholder="ABC123"
                       maxLength={6}
                       className="w-full px-4 py-4 bg-black/50 border border-gray-600 rounded-lg text-white font-mono text-xl md:text-2xl text-center tracking-widest placeholder-gray-500 focus:border-pink-500 focus:outline-none transition-colors"
@@ -621,44 +596,60 @@ const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
                     )}
                   </button>
                 </div>
-
-                {error && (
-                  <div className="mt-4 bg-red-900/30 border border-red-500/30 rounded-lg p-4">
-                    <p className="text-red-400 text-sm font-mono text-center">{error}</p>
-                  </div>
-                )}
-
-                {success && (
-                  <div className="mt-4 bg-green-900/30 border border-green-500/30 rounded-lg p-4">
-                    <p className="text-green-400 text-sm font-mono text-center">{success}</p>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
           {/* Info Section */}
           <div className="mt-12 md:mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-            <div className="text-center p-4 md:p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
-              <Shield className="w-6 h-6 md:w-8 md:h-8 text-pink-400 mx-auto mb-3" />
-              <h4 className="text-white font-mono font-bold mb-2 text-sm md:text-base">END-TO-END ENCRYPTED</h4>
-              <p className="text-gray-400 text-xs md:text-sm">Your conversations are protected with military-grade encryption</p>
+            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-pink-500/30 transition-colors">
+              <Shield className="w-8 h-8 text-pink-400 mx-auto mb-3" />
+              <h4 className="text-white font-mono font-bold mb-2">END-TO-END ENCRYPTED</h4>
+              <p className="text-gray-400 text-sm">Your conversations are protected with military-grade encryption</p>
             </div>
             
-            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
+            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-purple-500/30 transition-colors">
               <Heart className="w-8 h-8 text-purple-400 mx-auto mb-3" />
               <h4 className="text-white font-mono font-bold mb-2">COUPLE-FOCUSED</h4>
               <p className="text-gray-400 text-sm">Designed specifically for intimate conversations between couples</p>
             </div>
             
-            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm">
+            <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-green-500/30 transition-colors">
               <Lock className="w-8 h-8 text-green-400 mx-auto mb-3" />
-              <h4 className="text-white font-mono font-bold mb-2">ZERO LOGGING</h4>
-              <p className="text-gray-400 text-sm">We don't store your messages or personal information</p>
+              <h4 className="text-white font-mono font-bold mb-2">UNLIMITED ROOMS</h4>
+              <p className="text-gray-400 text-sm">Create as many rooms as you want. No restrictions!</p>
             </div>
           </div>
         </div>
       </main>
+
+      {/* Active Sessions Popup - Show on mount if sessions exist */}
+      {showSessionsPopup && (
+        <ActiveSessionsPopup 
+          userData={userData}
+          onResumeSession={(roomData) => {
+            setShowSessionsPopup(false);
+            handleJoinRoom(roomData.roomCode, roomData.isCreator);
+          }}
+          onClose={() => {
+            setShowSessionsPopup(false);
+            localStorage.removeItem('activeRoomData');
+          }}
+          onSkip={() => {
+            setShowSessionsPopup(false);
+            setActiveTab('create');
+          }}
+        />
+      )}
+
+      {/* Active Sessions Panel */}
+      {showActiveSessions && (
+        <ActiveSessionsPanel 
+          userData={userData}
+          onResumeSession={(roomData) => handleJoinRoom(roomData.roomCode, roomData.isCreator)}
+          onClose={() => setShowActiveSessions(false)}
+        />
+      )}
     </div>
   );
 };
