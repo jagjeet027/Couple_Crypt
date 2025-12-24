@@ -294,11 +294,11 @@ const SecureRoomPortal = ({
     setRoomCode('');
   };
 
-  // ✅ Format join code input
+   // ✅ Format join code input
   const formatJoinCodeInput = (value) => {
-    return value.replace(/[^A-Z0-9]/g, '').slice(0, 6).toUpperCase();
+    // Allow lowercase letters during typing, then convert to uppercase
+    return value.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
   };
-
   // ✅ Format time remaining
   const formatTimeRemaining = (milliseconds) => {
     if (!milliseconds || milliseconds <= 0) return 'Expired';
