@@ -1,4 +1,3 @@
-// ============ BACKEND: sessionController.js (Updated) ============
 import LoveRoom from '../models/loveRoom.js';
 
 export const getActiveSessions = async (req, res) => {
@@ -12,32 +11,38 @@ export const getActiveSessions = async (req, res) => {
       });
     }
 
-    // Find all connected rooms where user is either creator or joiner
+    // ✅ Find all CONNECTED rooms where user is creator or joiner
     const sessions = await LoveRoom.find({
       $or: [
-        { 'creator.userId': userId },
-        { 'joiner.userId': userId }
+        { 'creator.userId': userId.toString() },
+        { 'joiner.userId': userId.toString() }
       ],
       status: 'connected',
-      isActive: true
-    }).select('code creator joiner status createdAt lastActiveAt').sort({ createdAt: -1 });
+      isActive: false // Connected rooms have isActive = false
+    }).select('code creator joiner status createdAt lastActiveAt').sort({ lastActiveAt: -1 });
 
+    // ✅ Filter out expired and ensure joiner exists
     const activeSessions = sessions.filter(room => {
       if (room.isExpired()) {
         return false;
       }
-      return room.status === 'connected' && room.creator.userId && room.joiner.userId;
+      // Only include if both creator and joiner exist
+      return room.status === 'connected' && 
+             room.creator.userId && 
+             room.joiner.userId;
     });
 
+    // ✅ Format sessions properly
     const formattedSessions = activeSessions.map(session => ({
       code: session.code,
+      roomId: session._id.toString(),
       creator: {
-        userId: session.creator.userId,
+        userId: session.creator.userId.toString(),
         email: session.creator.email,
         name: session.creator.name
       },
       joiner: {
-        userId: session.joiner.userId,
+        userId: session.joiner.userId.toString(),
         email: session.joiner.email,
         name: session.joiner.name
       },
@@ -47,6 +52,8 @@ export const getActiveSessions = async (req, res) => {
       isCreator: session.creator.userId.toString() === userId.toString()
     }));
 
+    console.log('✅ Active sessions found:', formattedSessions.length);
+
     res.json({
       success: true,
       data: {
@@ -55,7 +62,7 @@ export const getActiveSessions = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error getting active sessions:', error);
+    console.error('❌ Error getting active sessions:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch active sessions'
@@ -75,7 +82,8 @@ export const resumeSession = async (req, res) => {
       });
     }
 
-    const room = await LoveRoom.findOne({ code: code.toUpperCase() });
+    const normalizedCode = code.trim().toUpperCase();
+    const room = await LoveRoom.findOne({ code: normalizedCode });
 
     if (!room) {
       return res.status(404).json({
@@ -84,17 +92,18 @@ export const resumeSession = async (req, res) => {
       });
     }
 
+    // ✅ Check if expired
     if (room.isExpired()) {
       room.status = 'expired';
       room.isActive = false;
       await room.save();
-
       return res.status(410).json({
         success: false,
         message: 'Session has expired'
       });
     }
 
+    // ✅ Check if still connected
     if (room.status !== 'connected') {
       return res.status(400).json({
         success: false,
@@ -102,10 +111,10 @@ export const resumeSession = async (req, res) => {
       });
     }
 
-    // Verify user is part of this room
+    // ✅ Verify user is part of this room
     const isAuthorized = 
       room.creator.userId.toString() === userId.toString() ||
-      (room.joiner.userId && room.joiner.userId.toString() === userId.toString());
+      (room.joiner?.userId && room.joiner.userId.toString() === userId.toString());
 
     if (!isAuthorized) {
       return res.status(403).json({
@@ -114,23 +123,34 @@ export const resumeSession = async (req, res) => {
       });
     }
 
-    // Update last active time
+    // ✅ Update last active time
     room.lastActiveAt = new Date();
     await room.save();
+
+    console.log('✅ Session resumed:', code);
 
     res.json({
       success: true,
       message: 'Session resumed successfully',
       data: {
         code: room.code,
-        creator: room.creator,
-        joiner: room.joiner,
+        roomId: room._id.toString(),
         status: room.status,
+        creator: {
+          userId: room.creator.userId.toString(),
+          email: room.creator.email,
+          name: room.creator.name
+        },
+        joiner: room.joiner?.userId ? {
+          userId: room.joiner.userId.toString(),
+          email: room.joiner.email,
+          name: room.joiner.name
+        } : null,
         createdAt: room.createdAt
       }
     });
   } catch (error) {
-    console.error('Error resuming session:', error);
+    console.error('❌ Error resuming session:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to resume session'
@@ -150,7 +170,8 @@ export const deleteSession = async (req, res) => {
       });
     }
 
-    const room = await LoveRoom.findOne({ code: code.toUpperCase() });
+    const normalizedCode = code.trim().toUpperCase();
+    const room = await LoveRoom.findOne({ code: normalizedCode });
 
     if (!room) {
       return res.status(404).json({
@@ -159,7 +180,7 @@ export const deleteSession = async (req, res) => {
       });
     }
 
-    // Verify user is the creator
+    // ✅ Only creator can delete
     if (room.creator.userId.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
@@ -167,15 +188,17 @@ export const deleteSession = async (req, res) => {
       });
     }
 
-    // Delete the room
+    // ✅ Delete the room
     await LoveRoom.deleteOne({ _id: room._id });
+
+    console.log('✅ Session deleted:', code);
 
     res.json({
       success: true,
       message: 'Session deleted successfully'
     });
   } catch (error) {
-    console.error('Error deleting session:', error);
+    console.error('❌ Error deleting session:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete session'

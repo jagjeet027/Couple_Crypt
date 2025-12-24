@@ -11,33 +11,50 @@ const createRoom = async (req, res) => {
       });
     }
 
+    // Generate unique code
     const code = await LoveRoom.generateShortCode();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     const newRoom = new LoveRoom({
-      code,
+      code: code.toUpperCase(), // ✅ Ensure uppercase
       creator: {
-        userId,
-        email: creatorEmail,
+        userId: userId.toString(), // ✅ Convert to string
+        email: creatorEmail.toLowerCase(),
         name: creatorName || creatorEmail.split('@')[0]
       },
+      joiner: {
+        userId: null,
+        email: null,
+        name: null,
+        joinedAt: null
+      },
       isActive: true,
+      status: 'waiting',
       expiresAt
     });
 
     await newRoom.save();
 
+    console.log('✅ Room created:', {
+      code: newRoom.code,
+      creatorId: newRoom.creator.userId,
+      status: newRoom.status
+    });
+
     res.status(201).json({
       success: true,
       message: 'Room created successfully',
       data: {
-        code,
-        roomId: newRoom._id,
-        expiresAt,
-        timeRemaining: expiresAt.getTime() - Date.now()
+        code: newRoom.code,
+        roomId: newRoom._id.toString(),
+        expiresAt: newRoom.expiresAt,
+        timeRemaining: expiresAt.getTime() - Date.now(),
+        status: newRoom.status,
+        creator: newRoom.creator
       }
     });
   } catch (error) {
+    console.error('❌ Room creation error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to create room'
@@ -56,16 +73,40 @@ const joinRoom = async (req, res) => {
       });
     }
 
-    const validation = await LoveRoom.validateCode(code);
-    if (!validation.valid) {
-      return res.status(400).json({
+    // ✅ Normalize code
+    const normalizedCode = code.trim().toUpperCase();
+    console.log('Attempting to join room with code:', normalizedCode);
+
+    // Find room by exact code match
+    const loveRoom = await LoveRoom.findOne({ code: normalizedCode });
+
+    if (!loveRoom) {
+      return res.status(404).json({
         success: false,
-        message: validation.message
+        message: 'Room not found - Invalid code'
       });
     }
 
-    const loveRoom = validation.loveRoom;
+    // Check if room is expired
+    if (loveRoom.isExpired()) {
+      loveRoom.status = 'expired';
+      loveRoom.isActive = false;
+      await loveRoom.save();
+      return res.status(410).json({
+        success: false,
+        message: 'Room has expired'
+      });
+    }
 
+    // Check if room is still waiting (not already connected)
+    if (loveRoom.status === 'connected') {
+      return res.status(400).json({
+        success: false,
+        message: 'Room is already connected by 2 members'
+      });
+    }
+
+    // Prevent creator from joining own room
     if (loveRoom.creator.userId.toString() === userId.toString()) {
       return res.status(400).json({
         success: false,
@@ -73,27 +114,52 @@ const joinRoom = async (req, res) => {
       });
     }
 
-    if (loveRoom.joiner.userId) {
+    // Check if room already has a joiner
+    if (loveRoom.joiner && loveRoom.joiner.userId) {
       return res.status(400).json({
         success: false,
-        message: 'Room already has two members'
+        message: 'Room already has a joiner'
       });
     }
 
-    await loveRoom.connectHearts(userId, userEmail, userName);
+    // ✅ Update joiner info
+    loveRoom.joiner = {
+      userId: userId.toString(),
+      email: userEmail.toLowerCase(),
+      name: userName || userEmail.split('@')[0],
+      joinedAt: new Date()
+    };
+    loveRoom.status = 'connected';
+    loveRoom.isActive = false; // Room is now full
+    await loveRoom.save();
+
+    console.log('✅ User joined room:', {
+      code: loveRoom.code,
+      joinerId: loveRoom.joiner.userId
+    });
 
     res.status(200).json({
       success: true,
       message: 'Joined room successfully',
       data: {
-        roomId: loveRoom._id,
+        roomId: loveRoom._id.toString(),
         code: loveRoom.code,
-        creator: loveRoom.creator,
-        joiner: loveRoom.joiner,
-        status: loveRoom.status
+        status: loveRoom.status,
+        creator: {
+          userId: loveRoom.creator.userId.toString(),
+          email: loveRoom.creator.email,
+          name: loveRoom.creator.name
+        },
+        joiner: {
+          userId: loveRoom.joiner.userId.toString(),
+          email: loveRoom.joiner.email,
+          name: loveRoom.joiner.name,
+          joinedAt: loveRoom.joiner.joinedAt
+        }
       }
     });
   } catch (error) {
+    console.error('❌ Join room error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to join room'
@@ -113,7 +179,18 @@ const getRoomStatus = async (req, res) => {
       });
     }
 
-    const room = await LoveRoom.findOne({ code: roomId.toUpperCase() });
+    // ✅ Handle both code and ID queries
+    const normalizedCode = roomId.trim().toUpperCase();
+    
+    let room = null;
+    
+    // Try by code first
+    room = await LoveRoom.findOne({ code: normalizedCode });
+    
+    // Try by ID if not found
+    if (!room) {
+      room = await LoveRoom.findById(normalizedCode);
+    }
 
     if (!room) {
       return res.status(404).json({
@@ -122,25 +199,28 @@ const getRoomStatus = async (req, res) => {
       });
     }
 
+    // Check if expired
     if (room.isExpired()) {
       room.status = 'expired';
       room.isActive = false;
       await room.save();
-
       return res.status(410).json({
         success: false,
         error: 'Room has expired'
       });
     }
 
-    const isCreator = room.creator.userId.toString() === userId;
-    const isJoiner = room.joiner.userId && room.joiner.userId.toString() === userId;
+    // Verify authorization if userId provided
+    if (userId) {
+      const isCreator = room.creator.userId.toString() === userId.toString();
+      const isJoiner = room.joiner?.userId?.toString() === userId.toString();
 
-    if (!isCreator && !isJoiner) {
-      return res.status(403).json({
-        success: false,
-        error: 'Not authorized to access this room'
-      });
+      if (!isCreator && !isJoiner) {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to access this room'
+        });
+      }
     }
 
     const timeRemaining = room.getTimeRemaining();
@@ -149,15 +229,27 @@ const getRoomStatus = async (req, res) => {
       success: true,
       data: {
         code: room.code,
+        roomId: room._id.toString(),
         status: room.status,
-        creator: room.creator,
-        joiner: room.joiner,
+        creator: {
+          userId: room.creator.userId.toString(),
+          email: room.creator.email,
+          name: room.creator.name
+        },
+        joiner: room.joiner?.userId ? {
+          userId: room.joiner.userId.toString(),
+          email: room.joiner.email,
+          name: room.joiner.name,
+          joinedAt: room.joiner.joinedAt
+        } : null,
         timeRemaining,
         expiresAt: room.expiresAt,
-        isConnected: room.status === 'connected'
+        isConnected: room.status === 'connected',
+        createdAt: room.createdAt
       }
     });
   } catch (error) {
+    console.error('❌ Get room status error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get room status'
@@ -176,10 +268,11 @@ const getUserRooms = async (req, res) => {
       });
     }
 
+    // ✅ Find rooms where user is creator or joiner
     const rooms = await LoveRoom.find({
       $or: [
-        { 'creator.userId': userId },
-        { 'joiner.userId': userId }
+        { 'creator.userId': userId.toString() },
+        { 'joiner.userId': userId.toString() }
       ]
     }).sort({ createdAt: -1 });
 
@@ -187,17 +280,37 @@ const getUserRooms = async (req, res) => {
       if (room.isExpired()) {
         return false;
       }
-      return room.isActive;
+      return room.status === 'connected' && room.joiner?.userId;
     });
+
+    const formattedRooms = activeRooms.map(room => ({
+      code: room.code,
+      roomId: room._id.toString(),
+      status: room.status,
+      creator: {
+        userId: room.creator.userId.toString(),
+        email: room.creator.email,
+        name: room.creator.name
+      },
+      joiner: room.joiner?.userId ? {
+        userId: room.joiner.userId.toString(),
+        email: room.joiner.email,
+        name: room.joiner.name
+      } : null,
+      createdAt: room.createdAt,
+      lastActiveAt: room.lastActiveAt || room.createdAt,
+      isCreator: room.creator.userId.toString() === userId.toString()
+    }));
 
     res.json({
       success: true,
       data: {
-        rooms: activeRooms,
-        total: activeRooms.length
+        rooms: formattedRooms,
+        total: formattedRooms.length
       }
     });
   } catch (error) {
+    console.error('❌ Get user rooms error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to get user rooms'
@@ -216,7 +329,8 @@ const validateCode = async (req, res) => {
       });
     }
 
-    const validation = await LoveRoom.validateCode(code);
+    const normalizedCode = code.trim().toUpperCase();
+    const validation = await LoveRoom.validateCode(normalizedCode);
 
     if (!validation.valid) {
       return res.status(400).json({
@@ -227,9 +341,15 @@ const validateCode = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Code is valid'
+      message: 'Code is valid',
+      data: {
+        code: validation.loveRoom.code,
+        status: validation.loveRoom.status,
+        creatorName: validation.loveRoom.creator.name
+      }
     });
   } catch (error) {
+    console.error('❌ Validate code error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Validation failed'
@@ -249,7 +369,8 @@ const resetCode = async (req, res) => {
       });
     }
 
-    const room = await LoveRoom.findOne({ code: code.toUpperCase() });
+    const normalizedCode = code.trim().toUpperCase();
+    const room = await LoveRoom.findOne({ code: normalizedCode });
 
     if (!room) {
       return res.status(404).json({
@@ -265,13 +386,16 @@ const resetCode = async (req, res) => {
       });
     }
 
-    await room.cancelRoom();
+    await LoveRoom.deleteOne({ _id: room._id });
+
+    console.log('✅ Room deleted:', room.code);
 
     res.json({
       success: true,
       message: 'Room deleted successfully'
     });
   } catch (error) {
+    console.error('❌ Delete room error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete room'

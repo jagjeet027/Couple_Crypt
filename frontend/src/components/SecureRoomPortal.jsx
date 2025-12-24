@@ -42,20 +42,13 @@ const SecureRoomPortal = ({
   const [showActiveSessions, setShowActiveSessions] = useState(false);
   const [showSessionsPopup, setShowSessionsPopup] = useState(false);
 
-  // Use ref to track if we've already checked (IMPORTANT FIX)
   const hasCheckedActiveRoom = useRef(false);
 
   const API_BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api`;
-  const CODE_EXPIRY_TIME = 30 * 24 * 60 * 60 * 1000;
 
-  // Check if user already has an active room - RUN ONLY ONCE
+  // ✅ Check for active sessions on mount (ONLY ONCE)
   useEffect(() => {
-    // IMPORTANT: Check if we've already done this check
-    if (hasCheckedActiveRoom.current) {
-      return;
-    }
-
-    // Mark that we've checked
+    if (hasCheckedActiveRoom.current) return;
     hasCheckedActiveRoom.current = true;
 
     try {
@@ -64,35 +57,23 @@ const SecureRoomPortal = ({
         try {
           const roomData = JSON.parse(activeRoomData);
           console.log('✅ Found active room:', roomData.roomCode);
-          // Show popup instead of redirecting immediately
           setShowSessionsPopup(true);
         } catch (parseError) {
-          console.error('❌ Invalid activeRoomData format:', parseError);
+          console.error('❌ Invalid activeRoomData:', parseError);
           localStorage.removeItem('activeRoomData');
         }
       }
     } catch (error) {
       console.error('❌ Error checking active room:', error);
-      localStorage.removeItem('activeRoomData');
     }
-  }, []); // Empty dependency - runs only once
+  }, []);
 
-  // Validate room code
-  const validateCode = async (code) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/love-room/validate/${code}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        }
-      });
-      return await response.json();
-    } catch (error) {
-      console.error('Error validating code:', error);
-      return { success: false, message: 'Failed to validate code' };
-    }
+  // ✅ Validate room code format
+  const validateCodeFormat = (code) => {
+    return code && code.length === 6 && /^[A-Z0-9]{6}$/.test(code);
   };
 
-  // Generate random 6-character room code
+  // ✅ Generate random 6-character room code
   const generateRoomCode = () => {
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
@@ -102,10 +83,10 @@ const SecureRoomPortal = ({
     return result;
   };
 
-  // Create new room - UNLIMITED rooms allowed
+  // ✅ Create new room
   const createRoom = async () => {
-    if (!userData?.email) {
-      setError('User information is required');
+    if (!userData?.email || !userData?.id) {
+      setError('User information is required. Please login again.');
       return;
     }
 
@@ -115,18 +96,24 @@ const SecureRoomPortal = ({
 
     try {
       const newRoomCode = generateRoomCode();
-      
+      const token = localStorage.getItem('authToken');
+
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+
+      console.log('🔐 Creating room with code:', newRoomCode);
+
       const response = await fetch(`${API_BASE_URL}/love-room/rooms/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          code: newRoomCode,
           creatorEmail: userData.email,
           creatorName: userData.name || userData.email.split('@')[0],
-          userId: userData.id || userData.email
+          userId: userData.id
         })
       });
 
@@ -136,25 +123,25 @@ const SecureRoomPortal = ({
         throw new Error(data.message || 'Failed to create room');
       }
 
-      // Show popup with code
-      setRoomCode(newRoomCode);
+      if (!data.success) {
+        throw new Error(data.message || 'Room creation failed');
+      }
+
+      console.log('✅ Room created successfully:', data.data);
+
+      // ✅ Show popup with code
+      setRoomCode(data.data.code);
       setShowCodePopup(true);
       setPopupTimer(15);
-      
-      // Set expiry timer display
-      if (data.data.expiresAt) {
-        const expiryTime = new Date(data.data.expiresAt).getTime();
-        const now = Date.now();
-        setTimeRemaining(Math.max(0, expiryTime - now));
-      }
-      
+      setTimeRemaining(data.data.timeRemaining);
+
       // Auto-join after 15 seconds
       const timer = setInterval(() => {
         setPopupTimer(prev => {
           if (prev <= 1) {
             clearInterval(timer);
             setShowCodePopup(false);
-            handleJoinRoom(newRoomCode, true);
+            handleJoinRoom(data.data.code, true);
             return 0;
           }
           return prev - 1;
@@ -162,17 +149,29 @@ const SecureRoomPortal = ({
       }, 1000);
 
     } catch (error) {
-      console.error('Error creating room:', error);
+      console.error('❌ Error creating room:', error);
       setError(error.message || 'Failed to create room. Please try again.');
     } finally {
       setIsCreating(false);
     }
   };
 
-  // Join existing room - UNLIMITED rooms allowed
+  // ✅ Join existing room
   const joinRoom = async () => {
-    if (!joinCode.trim() || joinCode.trim().length !== 6 || !userData?.email) {
-      setError('Please enter a valid 6-character room code');
+    if (!joinCode.trim()) {
+      setError('Please enter a room code');
+      return;
+    }
+
+    const normalizedCode = joinCode.trim().toUpperCase();
+
+    if (!validateCodeFormat(normalizedCode)) {
+      setError('Room code must be 6 characters (letters and numbers)');
+      return;
+    }
+
+    if (!userData?.email || !userData?.id) {
+      setError('User information is required. Please login again.');
       return;
     }
 
@@ -181,26 +180,41 @@ const SecureRoomPortal = ({
     setSuccess('');
 
     try {
-      const cleanCode = joinCode.trim().toUpperCase();
-      
-      // Validate code first
-      const validation = await validateCode(cleanCode);
-      if (!validation.success) {
-        throw new Error(validation.message || 'Invalid room code');
+      const token = localStorage.getItem('authToken');
+
+      if (!token) {
+        throw new Error('No authentication token found');
       }
-      
-      // Join the room
+
+      console.log('🔗 Joining room with code:', normalizedCode);
+
+      // ✅ First validate the code
+      const validationResponse = await fetch(
+        `${API_BASE_URL}/love-room/validate/${normalizedCode}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!validationResponse.ok) {
+        const validationData = await validationResponse.json();
+        throw new Error(validationData.message || 'Invalid room code');
+      }
+
+      // ✅ Now join the room
       const response = await fetch(`${API_BASE_URL}/love-room/rooms/join`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          code: cleanCode,
+          code: normalizedCode,
           userEmail: userData.email,
           userName: userData.name || userData.email.split('@')[0],
-          userId: userData.id || userData.email
+          userId: userData.id
         })
       });
 
@@ -210,48 +224,56 @@ const SecureRoomPortal = ({
         throw new Error(data.message || 'Failed to join room');
       }
 
+      if (!data.success) {
+        throw new Error(data.message || 'Join failed');
+      }
+
+      console.log('✅ Successfully joined room:', normalizedCode);
+
       setSuccess('Joined successfully! Redirecting to LoveChat...');
       setJoinCode('');
-      
+
       setTimeout(() => {
-        handleJoinRoom(cleanCode, false, data.data.roomId);
+        handleJoinRoom(normalizedCode, false);
       }, 1000);
 
     } catch (error) {
-      console.error('Error joining room:', error);
-      setError(error.message || 'Failed to join room. Please check the code and try again.');
+      console.error('❌ Error joining room:', error);
+      setError(error.message || 'Failed to join room. Please check the code.');
     } finally {
       setIsJoining(false);
     }
   };
 
-  // Handle joining room - save to localStorage
-  const handleJoinRoom = (code, isCreator = false, roomId = null) => {
+  // ✅ Handle joining room
+  const handleJoinRoom = (code, isCreator = false) => {
     const roomData = {
       roomCode: code,
       userEmail: userData.email,
       userName: userData.name || userData.email.split('@')[0],
       isCreator: isCreator,
-      userId: userData.id || userData.email,
-      roomId: roomId
+      userId: userData.id,
+      joinedAt: new Date().toISOString()
     };
 
-    console.log('📍 Joining room with data:', roomData);
+    console.log('📍 Room data prepared:', roomData);
     localStorage.setItem('activeRoomData', JSON.stringify(roomData));
     
-    // Call parent's onJoinChat - this will redirect
-    onJoinChat(roomData);
+    // Call parent to navigate
+    if (onJoinChat) {
+      onJoinChat(roomData);
+    }
   };
 
-  // Copy code to clipboard
+  // ✅ Copy code to clipboard
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(roomCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error('Failed to copy:', error);
-      // Fallback for older browsers
+      console.error('Copy failed:', error);
+      // Fallback
       const textArea = document.createElement('textarea');
       textArea.value = roomCode;
       document.body.appendChild(textArea);
@@ -263,7 +285,7 @@ const SecureRoomPortal = ({
     }
   };
 
-  // Handle tab changes
+  // ✅ Handle tab changes
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setError('');
@@ -272,22 +294,21 @@ const SecureRoomPortal = ({
     setRoomCode('');
   };
 
-  // Format join code input
+  // ✅ Format join code input
   const formatJoinCodeInput = (value) => {
     return value.replace(/[^A-Z0-9]/g, '').slice(0, 6).toUpperCase();
   };
 
-  // Format time remaining
+  // ✅ Format time remaining
   const formatTimeRemaining = (milliseconds) => {
     if (!milliseconds || milliseconds <= 0) return 'Expired';
     
     const days = Math.floor(milliseconds / (24 * 60 * 60 * 1000));
     const hours = Math.floor((milliseconds % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-    const minutes = Math.floor((milliseconds % (60 * 60 * 1000)) / (60 * 1000));
     
-    if (days > 0) return `${days}d ${hours}h remaining`;
-    if (hours > 0) return `${hours}h ${minutes}m remaining`;
-    return `${minutes}m remaining`;
+    if (days > 0) return `${days}d remaining`;
+    if (hours > 0) return `${hours}h remaining`;
+    return 'Expires soon';
   };
 
   // Code visualization component
@@ -330,9 +351,7 @@ const SecureRoomPortal = ({
               
               <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">ROOM CREATED!</h3>
               <p className="text-gray-400 mb-2 text-sm">Share this code with your partner</p>
-              <p className="text-xs text-green-400 mb-6 font-mono">
-                Expires in 30 days
-              </p>
+              <p className="text-xs text-green-400 mb-6 font-mono">Expires in 30 days</p>
               
               <div className="bg-black/70 border border-pink-500/50 rounded-xl p-4 mb-6">
                 <div className="text-2xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-purple-400 font-mono tracking-wider">
@@ -368,9 +387,8 @@ const SecureRoomPortal = ({
       <div className="fixed inset-0 opacity-20 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-purple-900"></div>
         <div className="absolute top-10 left-10 text-4xl md:text-6xl text-pink-500 animate-bounce">💖</div>
-        <div className="absolute top-20 right-20 text-3xl md:text-4xl text-purple-400" style={{animation: 'bounce 3s ease-in-out infinite 1s'}}>✨</div>
+        <div className="absolute top-20 right-20 text-3xl md:text-4xl text-purple-400 opacity-20 animate-pulse">✨</div>
         <div className="absolute bottom-20 left-20 text-4xl md:text-5xl text-pink-400 animate-pulse">💕</div>
-        <div className="absolute bottom-10 right-10 text-2xl md:text-3xl text-purple-300" style={{animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite 1.5s'}}>🌹</div>
       </div>
 
       {/* Header */}
@@ -448,7 +466,7 @@ const SecureRoomPortal = ({
               </span>
             </h2>
             <p className="text-sm md:text-lg text-gray-400 max-w-2xl mx-auto px-4">
-              Create unlimited secure rooms or join your partner's room to begin your encrypted love adventure.
+              Create unlimited secure rooms or join your partner's room.
               <br />
               <span className="text-pink-400 font-mono text-xs md:text-sm">Your privacy is our priority. Rooms expire in 30 days.</span>
             </p>
@@ -456,7 +474,7 @@ const SecureRoomPortal = ({
 
           {/* Tab Navigation */}
           <div className="flex justify-center mb-8">
-            <div className="bg-gray-800/50 rounded-lg p-1 backdrop-blur-sm w-full max-w-md">
+            <div className="bg-gray-800/50 rounded-lg p-1 sm:p-2 backdrop-blur-sm w-full max-w-md">
               <div className="flex">
                 <button
                   onClick={() => handleTabChange('create')}
@@ -494,7 +512,7 @@ const SecureRoomPortal = ({
                   </div>
                   <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">CREATE LOVE ROOM</h3>
                   <p className="text-gray-400 text-sm">
-                    Generate a secure room code for you and your partner
+                    Generate a secure room code
                     <br />
                     <span className="text-xs text-green-400">✓ Create unlimited rooms!</span>
                   </p>
@@ -554,9 +572,7 @@ const SecureRoomPortal = ({
                     <Key className="w-6 h-6 md:w-8 md:h-8 text-white" />
                   </div>
                   <h3 className="text-xl md:text-2xl font-bold text-white mb-2 font-mono">JOIN LOVE ROOM</h3>
-                  <p className="text-gray-400 text-sm">
-                    Enter your partner's room code to connect
-                  </p>
+                  <p className="text-gray-400 text-sm">Enter your partner's room code</p>
                 </div>
 
                 <div className="space-y-6">
@@ -605,25 +621,25 @@ const SecureRoomPortal = ({
             <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-pink-500/30 transition-colors">
               <Shield className="w-8 h-8 text-pink-400 mx-auto mb-3" />
               <h4 className="text-white font-mono font-bold mb-2">END-TO-END ENCRYPTED</h4>
-              <p className="text-gray-400 text-sm">Your conversations are protected with military-grade encryption</p>
+              <p className="text-gray-400 text-sm">Military-grade AES-256 protection</p>
             </div>
             
             <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-purple-500/30 transition-colors">
               <Heart className="w-8 h-8 text-purple-400 mx-auto mb-3" />
               <h4 className="text-white font-mono font-bold mb-2">COUPLE-FOCUSED</h4>
-              <p className="text-gray-400 text-sm">Designed specifically for intimate conversations between couples</p>
+              <p className="text-gray-400 text-sm">Designed for intimate connections</p>
             </div>
             
             <div className="text-center p-6 bg-gray-900/30 border border-gray-700/50 rounded-xl backdrop-blur-sm hover:border-green-500/30 transition-colors">
               <Lock className="w-8 h-8 text-green-400 mx-auto mb-3" />
               <h4 className="text-white font-mono font-bold mb-2">UNLIMITED ROOMS</h4>
-              <p className="text-gray-400 text-sm">Create as many rooms as you want. No restrictions!</p>
+              <p className="text-gray-400 text-sm">Create as many rooms as you want</p>
             </div>
           </div>
         </div>
       </main>
 
-      {/* Active Sessions Popup - Show on mount if sessions exist */}
+      {/* Active Sessions Popup */}
       {showSessionsPopup && (
         <ActiveSessionsPopup 
           userData={userData}
