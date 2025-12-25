@@ -5,35 +5,58 @@ export const initializeSocket = (io) => {
   io.use(authenticateSocket);
 
   io.on('connection', (socket) => {
+    console.log('User connected:', socket.user.id);
+
     socket.on('join-room', (roomCode) => {
       socket.join(roomCode);
+      console.log(`User ${socket.user.id} joined room ${roomCode}`);
     });
 
     socket.on('leave-room', (roomCode) => {
       socket.leave(roomCode);
+      console.log(`User ${socket.user.id} left room ${roomCode}`);
     });
 
     socket.on('send-message', async (data) => {
       try {
-        const { roomCode, message, messageType = 'text' } = data;
+        const { roomCode, message, messageType = 'text', replyTo } = data;
         const senderId = socket.user.id;
 
-        const newMessage = new Message({
+        // Create new message object
+        const messageData = {
           roomId: roomCode,
           senderId,
           message,
           messageType,
           timestamp: new Date()
-        });
+        };
 
+        // Add replyTo field if present
+        if (replyTo && replyTo.messageId) {
+          messageData.replyTo = {
+            messageId: replyTo.messageId,
+            message: replyTo.message,
+            senderId: replyTo.senderId
+          };
+        }
+
+        const newMessage = new Message(messageData);
         await newMessage.save();
+
+        // Emit the complete message with replyTo
         io.to(roomCode).emit('new-message', newMessage);
 
         socket.emit('message-sent', {
           success: true,
           messageId: newMessage._id
         });
+
+        console.log('Message sent:', {
+          messageId: newMessage._id,
+          hasReply: !!replyTo
+        });
       } catch (error) {
+        console.error('Error sending message:', error);
         socket.emit('message-error', {
           success: false,
           error: error.message
@@ -62,8 +85,11 @@ export const initializeSocket = (io) => {
             messageId,
             deletedAt: message.deletedAt
           });
+
+          console.log('Message deleted:', messageId);
         }
       } catch (error) {
+        console.error('Error deleting message:', error);
         socket.emit('message-error', {
           success: false,
           error: error.message
@@ -85,8 +111,11 @@ export const initializeSocket = (io) => {
             newMessage: newText,
             editedAt: message.editedAt
           });
+
+          console.log('Message edited:', messageId);
         }
       } catch (error) {
+        console.error('Error editing message:', error);
         socket.emit('message-error', {
           success: false,
           error: error.message
@@ -116,7 +145,9 @@ export const initializeSocket = (io) => {
         });
         await callMessage.save();
         
+        console.log('Call offer sent:', callType);
       } catch (error) {
+        console.error('Error sending offer:', error);
         socket.emit('call-error', { error: error.message });
       }
     });
@@ -130,7 +161,9 @@ export const initializeSocket = (io) => {
           answer
         });
         
+        console.log('Call answer sent');
       } catch (error) {
+        console.error('Error sending answer:', error);
         socket.emit('call-error', { error: error.message });
       }
     });
@@ -145,6 +178,7 @@ export const initializeSocket = (io) => {
         });
         
       } catch (error) {
+        console.error('Error sending ICE candidate:', error);
         socket.emit('call-error', { error: error.message });
       }
     });
@@ -153,7 +187,9 @@ export const initializeSocket = (io) => {
       try {
         const { roomCode } = data;
         socket.to(roomCode).emit('call-rejected');
+        console.log('Call rejected');
       } catch (error) {
+        console.error('Error rejecting call:', error);
         socket.emit('call-error', { error: error.message });
       }
     });
@@ -181,12 +217,15 @@ export const initializeSocket = (io) => {
           }
         );
         
+        console.log('Call ended, duration:', duration);
       } catch (error) {
+        console.error('Error ending call:', error);
         socket.emit('call-error', { error: error.message });
       }
     });
 
     socket.on('disconnect', () => {
+      console.log('User disconnected:', socket.user.id);
     });
   });
 

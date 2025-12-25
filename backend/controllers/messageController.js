@@ -4,7 +4,7 @@ import path from 'path';
 
 const sendMessage = async (req, res) => {
   try {
-    const { roomId, message, messageType = 'text' } = req.body;
+    const { roomId, message, messageType = 'text', replyTo } = req.body;
     const senderId = req.user.id || req.user._id;
 
     if (!roomId || !message) {
@@ -14,14 +14,24 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    const newMessage = new Message({
+    const messageData = {
       roomId,
       senderId,
       message,
       messageType,
       timestamp: new Date()
-    });
+    };
 
+    // Add replyTo if present
+    if (replyTo && replyTo.messageId) {
+      messageData.replyTo = {
+        messageId: replyTo.messageId,
+        message: replyTo.message,
+        senderId: replyTo.senderId
+      };
+    }
+
+    const newMessage = new Message(messageData);
     await newMessage.save();
 
     res.status(201).json({
@@ -39,7 +49,7 @@ const sendMessage = async (req, res) => {
 
 const sendFileMessage = async (req, res) => {
   try {
-    const { roomId, fileName, messageType = 'file' } = req.body;
+    const { roomId, fileName, messageType = 'file', replyTo } = req.body;
     const senderId = req.user.id || req.user._id;
 
     if (!roomId || !req.file) {
@@ -49,7 +59,7 @@ const sendFileMessage = async (req, res) => {
       });
     }
 
-    const newMessage = new Message({
+    const messageData = {
       roomId,
       senderId,
       message: fileName || req.file.originalname,
@@ -60,8 +70,25 @@ const sendFileMessage = async (req, res) => {
       filePath: req.file.path,
       mimeType: req.file.mimetype,
       timestamp: new Date()
-    });
+    };
 
+    // Add replyTo if present
+    if (replyTo) {
+      try {
+        const parsedReplyTo = typeof replyTo === 'string' ? JSON.parse(replyTo) : replyTo;
+        if (parsedReplyTo.messageId) {
+          messageData.replyTo = {
+            messageId: parsedReplyTo.messageId,
+            message: parsedReplyTo.message,
+            senderId: parsedReplyTo.senderId
+          };
+        }
+      } catch (e) {
+        console.error('Error parsing replyTo:', e);
+      }
+    }
+
+    const newMessage = new Message(messageData);
     await newMessage.save();
 
     res.status(201).json({
@@ -80,6 +107,7 @@ const sendFileMessage = async (req, res) => {
 const getMessages = async (req, res) => {
   try {
     const { roomId } = req.params;
+    const { limit = 50, before } = req.query;
 
     if (!roomId) {
       return res.status(400).json({
@@ -88,9 +116,16 @@ const getMessages = async (req, res) => {
       });
     }
 
-    const messages = await Message.find({ roomId, deleted: false })
+    let query = { roomId, deleted: false };
+    
+    // Pagination support
+    if (before) {
+      query.timestamp = { $lt: new Date(before) };
+    }
+
+    const messages = await Message.find(query)
       .sort({ timestamp: 1 })
-      .limit(50);
+      .limit(parseInt(limit));
 
     res.json({
       success: true,
@@ -233,7 +268,7 @@ const deleteMessage = async (req, res) => {
       });
     }
 
-    if (message.fileUrl && fs.existsSync(message.filePath)) {
+    if (message.filePath && fs.existsSync(message.filePath)) {
       try {
         fs.unlinkSync(message.filePath);
       } catch (err) {
@@ -362,7 +397,6 @@ const cleanupOldMessages = async (req, res) => {
 const getFile = async (req, res) => {
   try {
     const { messageId } = req.params;
-    const { userId } = req.query;
 
     if (!messageId) {
       return res.status(400).json({

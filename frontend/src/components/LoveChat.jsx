@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Send, Heart, Smile, MoreVertical, Edit3, Trash2, Copy, Check, CheckCheck, 
-  Shield, Wifi, WifiOff, User, Phone, LogOut, UserX, AlertCircle, Loader
+  Shield, Wifi, WifiOff, User, Phone, LogOut, UserX, AlertCircle, Loader, X, Reply
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import CallInterface from './CallInterface';
@@ -25,6 +25,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [showCallInterface, setShowCallInterface] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null);
 
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -180,6 +181,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     });
 
     socketInstance.on('new-message', (message) => {
+      console.log('New message received:', message);
       setMessages(prev => [...prev, message]);
       
       if (message.senderId !== userData.id && document.hasFocus()) {
@@ -203,6 +205,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           ? { ...msg, deleted: true, deletedAt: data.deletedAt, message: 'This message was deleted' }
           : msg
       ));
+      showSuccessMsg('Message deleted');
     });
 
     socketInstance.on('message-edited', (data) => {
@@ -211,6 +214,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           ? { ...msg, message: data.newMessage, edited: true, editedAt: data.editedAt }
           : msg
       ));
+      showSuccessMsg('Message edited');
     });
 
     socketInstance.on('user-typing', (data) => {
@@ -282,9 +286,19 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       senderId: userData.id
     };
 
+    if (replyingTo) {
+      messageData.replyTo = {
+        messageId: replyingTo._id,
+        message: replyingTo.message,
+        senderId: replyingTo.senderId
+      };
+    }
+
+    console.log('Sending message with data:', messageData);
     socket.emit('send-message', messageData);
     
     setNewMessage('');
+    setReplyingTo(null);
     setShowEmojiPicker(false);
     handleTypingStop();
   };
@@ -334,6 +348,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         }
       );
     } catch (error) {
+      console.error('Failed to mark message as read:', error);
     }
   };
 
@@ -343,11 +358,13 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       return;
     }
     socket.emit('delete-message', { messageId });
+    setMessageMenuId(null);
   };
 
   const startEditMessage = (message) => {
     setEditingMessage(message._id);
     setEditText(message.message);
+    setMessageMenuId(null);
   };
 
   const saveEditMessage = async () => {
@@ -378,40 +395,30 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const copyMessage = (text) => {
     navigator.clipboard.writeText(text).then(() => {
       showSuccessMsg('Message copied to clipboard', 2000);
+      setMessageMenuId(null);
     }).catch(() => {
       showErrorMsg('Failed to copy message');
     });
   };
 
-  const deleteRoom = async () => {
-    try {
-      const token = localStorage.getItem('authToken');
-      await fetch(
-        `${API_BASE_URL}/love-room/reset/${roomData.roomCode}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ userId: userData.id })
-        }
-      );
-    } catch (error) {
-    }
+  const handleReplyMessage = (message) => {
+    setReplyingTo(message);
+    setMessageMenuId(null);
+    messageInputRef.current?.focus();
   };
 
-  const handleLeaveRoom = async () => {
-    if (roomData.isCreator) {
-      await deleteRoom();
-    }
-    
-    localStorage.removeItem('activeRoomData');
+  const cancelReply = () => {
+    setReplyingTo(null);
+  };
+
+  const handleLeaveRoom = () => {
     setShowMenuOptions(false);
     
-    if (socket) socket.disconnect();
+    if (socket) {
+      socket.disconnect();
+    }
     
-    setTimeout(() => onLeaveChat(), 500);
+    onLeaveChat();
   };
 
   const handleLogout = () => {
@@ -427,14 +434,14 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
   if (isValidating) {
     return (
-      <div className="h-screen bg-gradient-to-br from-gray-900 via-black to-purple-900 flex items-center justify-center">
+      <div className="h-screen bg-gradient-to-br from-gray-900 via-black to-blue-900 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+          <div className="w-16 h-16 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
             <Heart className="w-8 h-8 text-white" />
           </div>
           <p className="text-white text-lg font-bold mb-2">Validating Room Access</p>
           <div className="flex items-center justify-center gap-2 mb-2">
-            <Loader className="w-4 h-4 text-pink-400 animate-spin" />
+            <Loader className="w-4 h-4 text-cyan-400 animate-spin" />
             <p className="text-gray-400 text-sm">Please wait...</p>
           </div>
           <p className="text-gray-500 text-xs">Room Code: {roomData?.roomCode}</p>
@@ -445,7 +452,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
   if (!roomValidated) {
     return (
-      <div className="h-screen bg-gradient-to-br from-gray-900 via-black to-purple-900 flex items-center justify-center px-4">
+      <div className="h-screen bg-gradient-to-br from-gray-900 via-black to-blue-900 flex items-center justify-center px-4">
         <div className="text-center bg-gray-800/50 border border-red-500/30 rounded-2xl p-8 max-w-md w-full backdrop-blur-sm">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h2 className="text-white text-xl font-bold mb-2">ROOM ACCESS DENIED</h2>
@@ -453,16 +460,16 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           
           <div className="bg-gray-900/50 rounded-lg p-4 mb-6 text-left">
             <p className="text-gray-400 text-xs mb-2">
-              <span className="text-pink-400">Room Code:</span> {roomData?.roomCode}
+              <span className="text-cyan-400">Room Code:</span> {roomData?.roomCode}
             </p>
             <p className="text-gray-400 text-xs">
-              <span className="text-pink-400">User ID:</span> {userData?.id || 'Unknown'}
+              <span className="text-cyan-400">User ID:</span> {userData?.id || 'Unknown'}
             </p>
           </div>
 
           <button
             onClick={onNavigateHome}
-            className="w-full px-6 py-3 bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-lg font-bold hover:from-pink-700 hover:to-purple-700 transition-all"
+            className="w-full px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-lg font-bold hover:from-cyan-700 hover:to-blue-700 transition-all"
           >
             Return to Home
           </button>
@@ -473,17 +480,17 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
   return (
     <div className="h-screen bg-black flex flex-col relative">
-      <header className="flex-shrink-0 bg-gray-900/90 backdrop-blur-sm border-b border-gray-800 p-4 relative z-[80] shadow-lg">
+      <header className="flex-shrink-0 bg-gradient-to-r from-gray-900 via-slate-900 to-gray-900 backdrop-blur-sm border-b border-cyan-500/30 p-4 relative z-[80] shadow-lg shadow-cyan-500/20">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3 flex-1">
-            <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-pink-500/30">
+            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 via-blue-500 to-indigo-500 rounded-full flex items-center justify-center shadow-lg shadow-cyan-500/50 animate-pulse">
               <Heart className="w-5 h-5 text-white" />
             </div>
             
             <div>
-              <h1 className="text-white font-bold text-lg">Love Room</h1>
+              <h1 className="text-white font-bold text-lg bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">Love Room</h1>
               <div className="flex items-center space-x-2 flex-wrap">
-                <span className="text-xs text-gray-400">Code: {roomData.roomCode}</span>
+                <span className="text-xs text-cyan-300">Code: {roomData.roomCode}</span>
                 
                 <div className="flex items-center space-x-1">
                   {isConnected ? (
@@ -500,7 +507,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                 </div>
 
                 {partnerTyping && (
-                  <span className="text-xs text-pink-400 animate-pulse">
+                  <span className="text-xs text-cyan-400 animate-pulse">
                     ✏️ Typing...
                   </span>
                 )}
@@ -511,7 +518,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setShowCallInterface(true)}
-              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm rounded-lg transition-all flex items-center gap-2 font-bold"
+              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm rounded-lg transition-all flex items-center gap-2 font-bold shadow-lg shadow-blue-500/30"
               title="Start Voice/Video Call"
             >
               <Phone className="w-4 h-4" />
@@ -521,14 +528,14 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setShowMenuOptions(!showMenuOptions)}
-                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors border border-purple-500/30"
                 title="Menu"
               >
-                <MoreVertical className="w-5 h-5 text-gray-400" />
+                <MoreVertical className="w-5 h-5 text-purple-400" />
               </button>
 
               {showMenuOptions && (
-                <div className="absolute right-0 top-12 bg-gray-800 rounded-lg shadow-2xl border border-gray-700 py-2 w-56 z-[70] animate-in fade-in slide-in-from-top-2">
+                <div className="absolute right-0 top-12 bg-gray-800 rounded-lg shadow-2xl border border-purple-500/30 py-2 w-56 z-[70] animate-in fade-in slide-in-from-top-2">
                   <button
                     onClick={() => {
                       setShowMenuOptions(false);
@@ -544,7 +551,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                   
                   <button
                     onClick={handleLeaveRoom}
-                    className="w-full px-4 py-2 text-left text-red-400 hover:bg-gray-700 flex items-center space-x-3 transition-colors text-sm"
+                    className="w-full px-4 py-2 text-left text-yellow-400 hover:bg-gray-700 flex items-center space-x-3 transition-colors text-sm"
                   >
                     <UserX className="w-4 h-4" />
                     <span>Leave Chat Room</span>
@@ -582,7 +589,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 relative z-[10] bg-gradient-to-b from-black via-gray-900 to-black">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 relative z-[10] bg-gradient-to-b from-gray-950 via-slate-900 to-gray-950">
         {isLoadingMessages ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
@@ -593,7 +600,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         ) : messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-pink-500/30">
+              <div className="w-16 h-16 bg-gradient-to-br from-purple-500 via-pink-500 to-rose-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/50 animate-pulse">
                 <Heart className="w-8 h-8 text-white" />
               </div>
               <p className="text-gray-400 text-lg font-bold">Your Love Story Begins Here</p>
@@ -609,7 +616,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
               <div key={message._id}>
                 {showDate && (
                   <div className="flex justify-center my-4">
-                    <span className="bg-gray-800/80 text-gray-400 text-xs px-4 py-1 rounded-full backdrop-blur-sm border border-gray-700">
+                    <span className="bg-gray-800/80 text-gray-400 text-xs px-4 py-1 rounded-full backdrop-blur-sm border border-purple-500/30">
                       {formatDate(message.timestamp)}
                     </span>
                   </div>
@@ -624,15 +631,31 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                       </div>
                     ) : (
                       <div
-                        className={`rounded-lg p-3 relative transition-all message-menu ${
+                        className={`rounded-2xl p-3 relative transition-all message-menu ${
                           isMyMsg 
-                            ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white rounded-br-none shadow-lg shadow-pink-500/30' 
-                            : 'bg-gray-800 text-gray-100 rounded-bl-none shadow-lg shadow-gray-900/50'
+                            ? 'bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-600 text-white rounded-br-none shadow-xl shadow-cyan-500/40 border border-cyan-400/20' 
+                            : 'bg-gradient-to-br from-slate-800 via-slate-700 to-slate-800 text-gray-100 rounded-bl-none shadow-xl shadow-slate-900/60 border border-slate-600/30'
                         }`}
                         onClick={() => {
                           setMessageMenuId(messageMenuId === message._id ? null : message._id);
                         }}
                       >
+                        {message.replyTo && message.replyTo.message && (
+                          <div className={`mb-2 pb-2 border-b ${isMyMsg ? 'border-white/30 bg-white/10' : 'border-slate-500/30 bg-slate-900/30'} rounded-lg p-2`}>
+                            <div className="flex items-start gap-2">
+                              <Reply className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-80" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs opacity-90 font-bold mb-1">
+                                  {message.replyTo.senderId === userData.id ? 'You' : getPartnerName()}
+                                </p>
+                                <p className="text-xs opacity-80 truncate italic bg-black/20 px-2 py-1 rounded">
+                                  "{message.replyTo.message}"
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {editingMessage === message._id ? (
                           <div className="space-y-2">
                             <input
@@ -642,6 +665,11 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                               className="w-full bg-black/30 text-white px-3 py-2 rounded text-sm border border-white/20 focus:outline-none focus:border-white/50"
                               autoFocus
                               maxLength={1000}
+                              onKeyPress={(e) => {
+                                if (e.key === 'Enter') {
+                                  saveEditMessage();
+                                }
+                              }}
                             />
                             <div className="flex space-x-2">
                               <button
@@ -659,38 +687,48 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                             </div>
                           </div>
                         ) : (
-                          <p className="break-words whitespace-pre-wrap">{message.message}</p>
+                          <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">{message.message}</p>
                         )}
 
-                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/10">
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/20">
                           <div className="flex items-center space-x-2">
-                            <span className="text-xs opacity-70">
+                            <span className="text-xs opacity-80 font-medium">
                               {formatTime(message.timestamp)}
                             </span>
                             {message.edited && (
-                              <span className="text-xs opacity-50">(edited)</span>
+                              <span className="text-xs opacity-60 bg-black/20 px-1.5 py-0.5 rounded">(edited)</span>
                             )}
                             
                             {isMyMsg && (
                               <div className="flex items-center ml-1">
                                 {message.readBy && message.readBy.length > 0 ? (
-                                  <CheckCheck className="w-3.5 h-3.5 text-blue-300" />
+                                  <CheckCheck className="w-3.5 h-3.5 text-cyan-200" />
                                 ) : (
-                                  <Check className="w-3.5 h-3.5 text-gray-300 opacity-70" />
+                                  <Check className="w-3.5 h-3.5 text-white opacity-60" />
                                 )}
                               </div>
                             )}
                           </div>
 
                           {messageMenuId === message._id && !message.deleted && (
-                            <div className="absolute -top-1 right-0 bg-gray-700 rounded-lg shadow-2xl border border-gray-600 py-1 z-[60] min-w-max animate-fadeIn">
+                            <div className="absolute -top-1 right-0 bg-gray-800 rounded-lg shadow-2xl border border-purple-500/30 py-1 z-[60] min-w-max animate-fadeIn backdrop-blur-sm">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleReplyMessage(message);
+                                }}
+                                className="w-full px-3 py-2 text-left text-gray-300 hover:bg-gray-700 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
+                              >
+                                <Reply className="w-3.5 h-3.5" />
+                                <span>Reply</span>
+                              </button>
+
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   copyMessage(message.message);
-                                  setMessageMenuId(null);
                                 }}
-                                className="w-full px-3 py-2 text-left text-gray-300 hover:bg-gray-600 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
+                                className="w-full px-3 py-2 text-left text-gray-300 hover:bg-gray-700 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
                               >
                                 <Copy className="w-3.5 h-3.5" />
                                 <span>Copy</span>
@@ -701,9 +739,8 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     startEditMessage(message);
-                                    setMessageMenuId(null);
                                   }}
-                                  className="w-full px-3 py-2 text-left text-gray-300 hover:bg-gray-600 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
+                                  className="w-full px-3 py-2 text-left text-gray-300 hover:bg-gray-700 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                   <span>Edit</span>
@@ -715,9 +752,8 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     deleteMessage(message._id);
-                                    setMessageMenuId(null);
                                   }}
-                                  className="w-full px-3 py-2 text-left text-red-400 hover:bg-gray-600 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
+                                  className="w-full px-3 py-2 text-left text-red-400 hover:bg-gray-700 flex items-center space-x-2 text-xs transition-colors whitespace-nowrap"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                   <span>Delete</span>
@@ -737,8 +773,29 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         <div ref={messagesEndRef} />
       </div>
 
+      {replyingTo && (
+        <div className="flex-shrink-0 bg-gradient-to-r from-cyan-900/80 via-blue-900/80 to-indigo-900/80 border-t border-cyan-500/50 p-3 backdrop-blur-sm">
+          <div className="flex items-start gap-3 max-w-6xl mx-auto">
+            <Reply className="w-4 h-4 text-cyan-300 mt-1 flex-shrink-0" />
+            <div className="flex-1 min-w-0 bg-black/30 rounded-lg p-2 border border-cyan-500/30">
+              <p className="text-xs text-cyan-300 font-semibold mb-1">
+                Replying to {replyingTo.senderId === userData.id ? 'yourself' : getPartnerName()}
+              </p>
+              <p className="text-sm text-gray-200 truncate">{replyingTo.message}</p>
+            </div>
+            <button
+              onClick={cancelReply}
+              className="p-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-700 transition-colors flex-shrink-0"
+              title="Cancel reply"
+            >
+              <X className="w-4 h-4 text-white" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {showEmojiPicker && (
-        <div className="flex-shrink-0 bg-gray-800/90 border-t border-gray-700 p-4 backdrop-blur-sm">
+        <div className="flex-shrink-0 bg-gray-800/90 border-t border-cyan-500/30 p-4 backdrop-blur-sm">
           <div className="flex flex-wrap gap-2">
             {quickEmojis.map((emoji, index) => (
               <button
@@ -757,15 +814,15 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      <div className="flex-shrink-0 bg-gray-900/90 backdrop-blur-sm border-t border-gray-800 p-4 shadow-lg">
+      <div className="flex-shrink-0 bg-gradient-to-r from-gray-900 via-slate-900 to-gray-900 backdrop-blur-sm border-t border-cyan-500/30 p-4 shadow-lg shadow-cyan-500/20">
         <div className="flex items-center space-x-2 max-w-6xl mx-auto">
           <button
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors border border-cyan-500/30"
             title="Add emoji"
           >
-            <Smile className="w-5 h-5 text-gray-400 hover:text-pink-400 transition-colors" />
+            <Smile className="w-5 h-5 text-cyan-400 hover:text-blue-400 transition-colors" />
           </button>
 
           <input
@@ -780,20 +837,22 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
               }
             }}
             placeholder={
-              isConnected && roomValidated 
-                ? "Type your message... (Enter to send)" 
-                : "Connecting to chat server..."
+              replyingTo 
+                ? `Replying to ${replyingTo.senderId === userData.id ? 'yourself' : getPartnerName()}...`
+                : isConnected && roomValidated 
+                  ? "Type your message... (Enter to send)" 
+                  : "Connecting to chat server..."
             }
             disabled={!isConnected || !roomValidated}
             maxLength={1000}
-            className="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 focus:bg-gray-750 disabled:opacity-50 disabled:cursor-not-allowed transition-all placeholder-gray-500 text-sm"
+            className="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all placeholder-gray-500 text-sm border border-cyan-500/20"
           />
 
           <button
             type="button"
             onClick={sendMessage}
             disabled={!newMessage.trim() || !isConnected || !roomValidated}
-            className="p-3 rounded-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-pink-500/30 hover:shadow-pink-500/50 active:scale-95"
+            className="p-3 rounded-lg bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-700 hover:via-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-500/40 hover:shadow-cyan-500/60 active:scale-95 border border-cyan-400/30"
             title="Send message"
           >
             <Send className="w-5 h-5 text-white" />
@@ -803,7 +862,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
       {showCallInterface && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="w-full max-w-4xl h-[600px] bg-gray-900 rounded-2xl shadow-2xl border border-gray-700 overflow-hidden">
+          <div className="w-full max-w-4xl h-[600px] bg-gray-900 rounded-2xl shadow-2xl border border-purple-500/30 overflow-hidden">
             <CallInterface
               socket={socket}
               isConnected={isConnected}
@@ -832,10 +891,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           animation: fadeIn 0.3s ease-out;
         }
 
-        .hover\:bg-gray-750:hover {
-          background-color: #2d3748;
-        }
-
         .animate-in {
           animation: slideIn 0.2s ease-out;
         }
@@ -852,24 +907,24 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         }
 
         div::-webkit-scrollbar {
-          width: 6px;
+          width: 8px;
         }
 
         div::-webkit-scrollbar-track {
-          background: transparent;
+          background: rgba(15, 23, 42, 0.5);
         }
 
         div::-webkit-scrollbar-thumb {
-          background: rgba(168, 85, 247, 0.5);
-          border-radius: 3px;
+          background: linear-gradient(180deg, rgba(168, 85, 247, 0.6), rgba(236, 72, 153, 0.6));
+          border-radius: 4px;
         }
 
         div::-webkit-scrollbar-thumb:hover {
-          background: rgba(168, 85, 247, 0.7);
+          background: linear-gradient(180deg, rgba(168, 85, 247, 0.8), rgba(236, 72, 153, 0.8));
         }
       `}</style>
     </div>
   );
 };
 
-export default LoveChat
+export default LoveChat;
