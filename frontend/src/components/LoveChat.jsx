@@ -3,30 +3,23 @@ import {
   Send, Heart, Smile, MoreVertical, Edit3, Trash2, Copy, Check, CheckCheck, 
   Shield, Wifi, WifiOff, User, Phone, LogOut, UserX, AlertCircle, Loader, X, Reply,
   ChevronDown, Bell, PhoneOff, Video, Mic, MicOff, VideoOff, PhoneCall, Search,
-  Archive, Pin, Flag, Download, Share2, MoreHorizontal, Clock, Info
+  Archive, Pin, Flag, Download, Share2, MoreHorizontal, Clock, Info, Paperclip,
+  Image as ImageIcon, Music, FileText, Film
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import CallInterface from './CallInterface';
 
 const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateToGame }) => {
-  // ============ STATE DECLARATIONS ============
   
-  // Validation
   const [roomValidated, setRoomValidated] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [isValidating, setIsValidating] = useState(true);
-  
-  // Messages
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [partnerTyping, setPartnerTyping] = useState(false);
-  
-  // Connection
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
-  
-  // UI States
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [editingMessage, setEditingMessage] = useState(null);
   const [editText, setEditText] = useState('');
@@ -40,18 +33,21 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [filteredMessages, setFilteredMessages] = useState([]);
-  
-  // Calls
   const [showCallInterface, setShowCallInterface] = useState(false);
   const [incomingCallData, setIncomingCallData] = useState(null);
   const [isInCall, setIsInCall] = useState(false);
   const [callRinging, setCallRinging] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filePreview, setFilePreview] = useState(null);
+  const [showFilePreview, setShowFilePreview] = useState(false);
 
-  // Refs
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const messageInputRef = useRef(null);
   const menuRef = useRef(null);
+  const fileInputRef = useRef(null);
   const validationChecked = useRef(false);
   const messageRefs = useRef({});
 
@@ -60,7 +56,12 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   const quickEmojis = ['❤️', '💕', '😘', '🥰', '😍', '💖', '💋', '🌹', '💝', '✨', '🔥', '😊', '😂', '🤗', '😉', '💯', '👍', '🎉', '🌟', '💪'];
   const CHARACTER_LIMIT = 150;
 
-  // ============ UTILITY FUNCTIONS ============
+  const ALLOWED_FILE_TYPES = {
+    image: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
+    video: ['video/mp4', 'video/mpeg', 'video/quicktime'],
+    audio: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm'],
+    document: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/plain']
+  };
 
   const showErrorMsg = (message, duration = 5000) => {
     setError(message);
@@ -96,23 +97,30 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
   const getPartnerName = () => roomData?.userName || roomData?.partnerName || 'Partner';
 
-  const playRingtone = () => {
-    try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      
-      oscillator.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.frequency.value = 800;
-      gain.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (err) {
-      console.error('Ringtone error:', err);
+  const getFileType = (mimeType) => {
+    if (ALLOWED_FILE_TYPES.image.includes(mimeType)) return 'image';
+    if (ALLOWED_FILE_TYPES.video.includes(mimeType)) return 'video';
+    if (ALLOWED_FILE_TYPES.audio.includes(mimeType)) return 'audio';
+    if (ALLOWED_FILE_TYPES.document.includes(mimeType)) return 'document';
+    return 'file';
+  };
+
+  const getFileIcon = (fileType) => {
+    switch(fileType) {
+      case 'image': return <ImageIcon className="w-5 h-5" />;
+      case 'video': return <Film className="w-5 h-5" />;
+      case 'audio': return <Music className="w-5 h-5" />;
+      case 'document': return <FileText className="w-5 h-5" />;
+      default: return <Paperclip className="w-5 h-5" />;
     }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
   const scrollToBottom = (smooth = true) => {
@@ -132,8 +140,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       setTimeout(() => element.classList.remove('highlight-message'), 2000);
     }
   };
-
-  // ============ ROOM VALIDATION ============
 
   useEffect(() => {
     if (validationChecked.current) return;
@@ -169,7 +175,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         setRoomValidated(true);
         setValidationError('');
       } catch (error) {
-        console.error('Validation error:', error);
         setValidationError(error.message);
         setRoomValidated(false);
       } finally {
@@ -179,8 +184,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
     validateRoom();
   }, [roomData?.roomCode, userData?.id, userData?._id]);
-
-  // ============ EVENT LISTENERS ============
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -202,8 +205,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     }
   }, []);
 
-  // ============ MESSAGE SEARCH ============
-
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredMessages([]);
@@ -216,8 +217,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     );
     setFilteredMessages(filtered);
   }, [searchQuery, messages]);
-
-  // ============ SOCKET CONNECTION ============
 
   useEffect(() => {
     if (!roomValidated || !roomData?.roomCode || (!userData?.id && !userData?._id)) return;
@@ -234,26 +233,20 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     });
 
     socketInstance.on('connect', () => {
-      console.log('✅ Socket connected');
       setIsConnected(true);
       setError('');
       socketInstance.emit('join-room', roomData.roomCode.toUpperCase());
     });
 
-    socketInstance.on('disconnect', (reason) => {
-      console.log('❌ Socket disconnected:', reason);
+    socketInstance.on('disconnect', () => {
       setIsConnected(false);
     });
 
-    socketInstance.on('connect_error', (error) => {
-      console.error('Connection error:', error);
+    socketInstance.on('connect_error', () => {
       showErrorMsg('Connection failed. Retrying...');
     });
 
-    // ============ MESSAGE EVENTS ============
-
     socketInstance.on('new-message', (message) => {
-      console.log('📨 New message received:', message);
       setMessages(prev => {
         const exists = prev.some(m => m._id === message._id);
         if (exists) return prev;
@@ -277,18 +270,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       }
     });
 
-    socketInstance.on('message-sent', (data) => {
-      console.log('✅ Message sent confirmation:', data);
-      showSuccessMsg('Message sent', 1500);
-    });
-
-    socketInstance.on('message-error', (data) => {
-      console.error('❌ Message error:', data);
-      showErrorMsg(data.error || 'Failed to send message');
-    });
-
     socketInstance.on('message-deleted', (data) => {
-      console.log('🗑️ Message deleted:', data);
       setMessages(prev => prev.map(msg => 
         msg._id === data.messageId 
           ? { ...msg, deleted: true, message: 'This message was deleted' }
@@ -299,7 +281,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     });
 
     socketInstance.on('message-edited', (data) => {
-      console.log('✏️ Message edited:', data);
       setMessages(prev => prev.map(msg => 
         msg._id === data.messageId 
           ? { ...msg, message: data.newMessage, edited: true, editedAt: new Date().toISOString() }
@@ -315,23 +296,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       }
     });
 
-    socketInstance.on('message-read', (data) => {
-      console.log('👁️ Message read:', data);
-      setMessages(prev => prev.map(msg => {
-        if (msg._id === data.messageId) {
-          const readBy = msg.readBy || [];
-          if (!readBy.includes(data.userId)) {
-            return { ...msg, readBy: [...readBy, data.userId] };
-          }
-        }
-        return msg;
-      }));
-    });
-
-    // ============ CALL EVENTS ============
-
     socketInstance.on('receive-offer', (data) => {
-      console.log('🔔 Incoming call:', data);
       setIncomingCallData({
         callerId: data.senderId,
         callType: data.callType,
@@ -353,22 +318,19 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     });
 
     socketInstance.on('call-rejected', () => {
-      console.log('❌ Call rejected');
       setCallRinging(false);
       setIncomingCallData(null);
       showErrorMsg('Call was rejected');
     });
 
     socketInstance.on('call-ended', () => {
-      console.log('📞 Call ended');
       setCallRinging(false);
       setIncomingCallData(null);
       setIsInCall(false);
       setShowCallInterface(false);
     });
 
-    socketInstance.on('receive-answer', (data) => {
-      console.log('✅ Call answered:', data);
+    socketInstance.on('receive-answer', () => {
       setIsInCall(true);
       setCallRinging(false);
     });
@@ -376,13 +338,10 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     setSocket(socketInstance);
 
     return () => {
-      console.log('🔌 Cleaning up socket connection');
       socketInstance.emit('leave-room', roomData.roomCode.toUpperCase());
       socketInstance.disconnect();
     };
   }, [roomValidated, roomData?.roomCode, userData?.id, userData?._id]);
-
-  // ============ LOAD MESSAGES ============
 
   useEffect(() => {
     if (roomData?.roomCode && roomValidated) {
@@ -407,23 +366,197 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         }
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to load messages');
-      }
+      if (!response.ok) throw new Error('Failed to load messages');
 
       const data = await response.json();
       if (data.success) {
         setMessages(data.data?.messages || data.messages || []);
       }
     } catch (error) {
-      console.error('Load messages error:', error);
       showErrorMsg('Failed to load messages');
     } finally {
       setIsLoadingMessages(false);
     }
   };
 
-  // ============ MESSAGE FUNCTIONS ============
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const fileType = getFileType(file.type);
+    if (!Object.values(ALLOWED_FILE_TYPES).flat().includes(file.type)) {
+      showErrorMsg('File type not supported');
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      showErrorMsg('File size exceeds 50MB limit');
+      return;
+    }
+
+    setSelectedFile(file);
+
+    if (fileType === 'image') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setFilePreview(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setFilePreview(null);
+    }
+
+    setShowFilePreview(true);
+  };
+
+  const sendFile = async () => {
+    if (!selectedFile) {
+      showErrorMsg('No file selected');
+      return;
+    }
+
+    if (!socket || !isConnected) {
+      showErrorMsg('Not connected to server');
+      return;
+    }
+
+    const token = localStorage.getItem('authToken');
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('roomId', roomData.roomCode.toUpperCase());
+    formData.append('fileName', selectedFile.name);
+    formData.append('messageType', getFileType(selectedFile.type));
+
+    if (replyingTo) {
+      formData.append('replyTo', JSON.stringify({
+        messageId: replyingTo._id,
+        message: replyingTo.message,
+        senderId: replyingTo.senderId || replyingTo.sender?._id
+      }));
+    }
+
+    const optimisticMessage = {
+      _id: `temp-${Date.now()}`,
+      roomId: roomData.roomCode.toUpperCase(),
+      senderId: userData.id || userData._id,
+      message: selectedFile.name,
+      messageType: getFileType(selectedFile.type),
+      fileName: selectedFile.name,
+      fileSize: selectedFile.size,
+      mimeType: selectedFile.type,
+      fileUrl: filePreview || `/uploads/temp-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      isUploading: true,
+      uploadProgress: 0,
+      replyTo: replyingTo ? {
+        messageId: replyingTo._id,
+        message: replyingTo.message,
+        senderId: replyingTo.senderId || replyingTo.sender?._id
+      } : null
+    };
+
+    setMessages(prev => [...prev, optimisticMessage]);
+    setSelectedFile(null);
+    setFilePreview(null);
+    setShowFilePreview(false);
+    setReplyingTo(null);
+    setUploadingFile(true);
+    setUploadProgress(0);
+    setTimeout(() => scrollToBottom(), 100);
+
+    try {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          setUploadProgress(Math.round(percentComplete));
+          
+          setMessages(prev => prev.map(msg => 
+            msg._id === optimisticMessage._id 
+              ? { ...msg, uploadProgress: Math.round(percentComplete) }
+              : msg
+          ));
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 201) {
+          const response = JSON.parse(xhr.responseText);
+          if (response.success) {
+            setMessages(prev => prev.map(msg => 
+              msg._id === optimisticMessage._id 
+                ? { 
+                    ...response.data, 
+                    isUploading: false,
+                    _id: response.data._id
+                  }
+                : msg
+            ));
+
+            socket.emit('send-message', {
+              roomId: roomData.roomCode.toUpperCase(),
+              roomCode: roomData.roomCode.toUpperCase(),
+              message: response.data.message,
+              messageType: response.data.messageType,
+              fileUrl: response.data.fileUrl,
+              fileName: response.data.fileName,
+              fileSize: response.data.fileSize,
+              mimeType: response.data.mimeType,
+              senderId: userData.id || userData._id,
+              _id: response.data._id,
+              timestamp: response.data.timestamp,
+              replyTo: response.data.replyTo
+            });
+            
+            setUploadProgress(0);
+          }
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        showErrorMsg('File upload failed');
+        setMessages(prev => prev.filter(msg => msg._id !== optimisticMessage._id));
+        setUploadingFile(false);
+        setUploadProgress(0);
+      });
+
+      xhr.addEventListener('abort', () => {
+        showErrorMsg('File upload cancelled');
+        setMessages(prev => prev.filter(msg => msg._id !== optimisticMessage._id));
+        setUploadingFile(false);
+        setUploadProgress(0);
+      });
+
+      xhr.open('POST', `${API_BASE_URL}/messages/send-file`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.send(formData);
+    } catch (error) {
+      showErrorMsg('Error uploading file');
+      setMessages(prev => prev.filter(msg => msg._id !== optimisticMessage._id));
+      setUploadingFile(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const playRingtone = () => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.frequency.value = 800;
+      gain.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+    } catch (err) {
+      // Silent
+    }
+  };
 
   const sendMessage = async (e) => {
     e?.preventDefault();
@@ -456,7 +589,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       };
     }
 
-    console.log('📤 Sending message:', messageData);
     socket.emit('send-message', messageData);
     
     setNewMessage('');
@@ -507,16 +639,8 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           'Authorization': `Bearer ${token}`
         }
       });
-      
-      if (socket && isConnected) {
-        socket.emit('message-read', {
-          messageId,
-          userId: userData.id || userData._id,
-          roomCode: roomData.roomCode.toUpperCase()
-        });
-      }
     } catch (error) {
-      console.error('Failed to mark as read:', error);
+      // Silent
     }
   };
 
@@ -527,7 +651,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     }
 
     if (window.confirm('Delete this message? This cannot be undone.')) {
-      console.log('🗑️ Deleting message:', messageId);
       socket.emit('delete-message', { 
         messageId,
         roomCode: roomData.roomCode.toUpperCase()
@@ -553,7 +676,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
       return;
     }
 
-    console.log('✏️ Editing message:', editingMessage);
     socket.emit('edit-message', {
       messageId: editingMessage,
       newMessage: editText.trim(),
@@ -650,45 +772,204 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
     setShowMenuOptions(false);
   };
 
-  // ============ MESSAGE RENDER COMPONENT ============
+  const renderMessageContent = (message) => {
+    if (!message) return null;
+    
+    if (message.messageType !== 'text' && message.mimeType) {
+      return renderFileMessage(message);
+    }
 
-  const MessageContent = ({ message }) => {
-    const isExpanded = expandedMessages.has(message._id);
-    const needsExpand = message.message && message.message.length > CHARACTER_LIMIT;
-    const displayText = isExpanded ? message.message : message.message?.substring(0, CHARACTER_LIMIT);
+    if (message.messageType === 'text') {
+      const isExpanded = expandedMessages.has(message._id);
+      const needsExpand = message.message && message.message.length > CHARACTER_LIMIT;
+      const displayText = isExpanded ? message.message : message.message?.substring(0, CHARACTER_LIMIT);
+
+      return (
+        <div className="space-y-2">
+          {message.deleted ? (
+            <p className="text-gray-500 text-sm italic flex items-center gap-2">
+              <Trash2 className="w-3 h-3" />
+              This message was deleted
+            </p>
+          ) : (
+            <>
+              <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">
+                {displayText}
+                {!isExpanded && needsExpand && '...'}
+              </p>
+              {needsExpand && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleExpandMessage(message._id);
+                  }}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 mt-1"
+                >
+                  {isExpanded ? 'Show Less' : 'Read More'}
+                  <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderFileMessage = (message) => {
+    if (!message || !message.mimeType) return null;
+    
+    const fileType = getFileType(message.mimeType);
+    const isImage = fileType === 'image';
+    const isVideo = fileType === 'video';
+    const isAudio = fileType === 'audio';
+    const isUploading = message.isUploading;
+
+    if (isImage && !message.deleted) {
+      return (
+        <div className="space-y-2">
+          <div className="bg-gray-700/30 p-2 rounded-lg max-w-xs">
+            {isUploading ? (
+              <div className="flex items-center justify-center h-32 bg-gray-800 rounded">
+                <div className="text-center">
+                  <Loader className="w-6 h-6 text-cyan-400 animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-gray-400">{message.uploadProgress || 0}%</p>
+                </div>
+              </div>
+            ) : (
+              <img
+                src={message.fileUrl}
+                alt={message.fileName}
+                className="max-w-full max-h-64 object-contain rounded cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={() => window.open(message.fileUrl, '_blank')}
+              />
+            )}
+          </div>
+          {isUploading && (
+            <div className="space-y-1">
+              <div className="w-full bg-gray-600 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+                  style={{ width: `${message.uploadProgress || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">Uploading... {message.uploadProgress || 0}%</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isVideo && !message.deleted) {
+      return (
+        <div className="space-y-2">
+          <div className="bg-gray-700/30 p-2 rounded-lg max-w-xs">
+            {isUploading ? (
+              <div className="flex items-center justify-center h-32 bg-gray-800 rounded">
+                <div className="text-center">
+                  <Loader className="w-6 h-6 text-cyan-400 animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-gray-400">{message.uploadProgress || 0}%</p>
+                </div>
+              </div>
+            ) : (
+              <video
+                controls
+                className="max-w-full max-h-64 object-contain rounded"
+                src={message.fileUrl}
+              />
+            )}
+          </div>
+          {isUploading && (
+            <div className="space-y-1">
+              <div className="w-full bg-gray-600 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+                  style={{ width: `${message.uploadProgress || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">Uploading... {message.uploadProgress || 0}%</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isAudio && !message.deleted) {
+      return (
+        <div className="space-y-2">
+          <div className="bg-gray-700/30 p-3 rounded-lg max-w-xs">
+            {isUploading ? (
+              <div className="text-center">
+                <Loader className="w-5 h-5 text-cyan-400 animate-spin mx-auto mb-2" />
+                <p className="text-xs text-gray-400">{message.uploadProgress || 0}%</p>
+              </div>
+            ) : (
+              <audio
+                controls
+                className="w-full"
+                src={message.fileUrl}
+              />
+            )}
+          </div>
+          {isUploading && (
+            <div className="space-y-1">
+              <div className="w-full bg-gray-600 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+                  style={{ width: `${message.uploadProgress || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">Uploading... {message.uploadProgress || 0}%</p>
+            </div>
+          )}
+        </div>
+      );
+    }
 
     return (
-      <div className="space-y-2">
-        {message.deleted ? (
-          <p className="text-gray-500 text-sm italic flex items-center gap-2">
-            <Trash2 className="w-3 h-3" />
-            This message was deleted
-          </p>
+      <div className="bg-gray-700/30 p-3 rounded-lg max-w-xs border border-gray-600/50 hover:bg-gray-700/40 transition-colors cursor-pointer">
+        {isUploading ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gray-800 rounded-lg flex-shrink-0">
+                {getFileIcon(fileType)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white truncate">{message.fileName}</p>
+                <p className="text-xs text-gray-400">{formatFileSize(message.fileSize)}</p>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="w-full bg-gray-600 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+                  style={{ width: `${message.uploadProgress || 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">{message.uploadProgress || 0}%</p>
+            </div>
+          </div>
         ) : (
-          <>
-            <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">
-              {displayText}
-              {!isExpanded && needsExpand && '...'}
-            </p>
-            {needsExpand && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleExpandMessage(message._id);
-                }}
-                className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 mt-1"
-              >
-                {isExpanded ? 'Show Less' : 'Read More'}
-                <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-              </button>
-            )}
-          </>
+          <a
+            href={message.fileUrl}
+            download={message.fileName}
+            className="flex items-center gap-3"
+          >
+            <div className="p-2 bg-gray-800 rounded-lg flex-shrink-0">
+              {getFileIcon(fileType)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white truncate">{message.fileName}</p>
+              <p className="text-xs text-gray-400">{formatFileSize(message.fileSize)}</p>
+            </div>
+            <Download className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+          </a>
         )}
       </div>
     );
   };
-
-  // ============ MAIN RENDER ============
 
   if (isValidating) {
     return (
@@ -721,57 +1002,48 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
   }
 
   return (
-    <div className="h-screen bg-black flex flex-col">
-      {/* Header */}
-      <header className="flex-shrink-0 bg-gradient-to-r from-gray-900 via-slate-900 to-gray-900 border-b border-cyan-500/30 p-4 z-[80] shadow-lg shadow-cyan-500/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3 flex-1">
-            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center shadow-lg shadow-cyan-500/50 animate-pulse">
+    <div className="h-screen bg-black flex flex-col overflow-hidden">
+      <header className="flex-shrink-0 bg-gradient-to-r from-gray-900 via-slate-900 to-gray-900 border-b border-cyan-500/30 p-3 md:p-4 z-[80] shadow-lg shadow-cyan-500/20">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-2 md:space-x-3 flex-1 min-w-0">
+            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center shadow-lg shadow-cyan-500/50 animate-pulse flex-shrink-0">
               <Heart className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h1 className="text-white font-bold text-lg">Love Room</h1>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-white font-bold text-base md:text-lg truncate">Love Room</h1>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-cyan-300 font-mono bg-cyan-900/30 px-2 py-0.5 rounded">
                   {roomData.roomCode}
                 </span>
                 {isConnected ? (
                   <>
-                    <Wifi className="w-3 h-3 text-green-400" />
+                    <Wifi className="w-3 h-3 text-green-400 flex-shrink-0" />
                     <span className="text-xs text-green-400">Connected</span>
                   </>
                 ) : (
                   <>
-                    <WifiOff className="w-3 h-3 text-red-400" />
+                    <WifiOff className="w-3 h-3 text-red-400 flex-shrink-0" />
                     <span className="text-xs text-red-400">Connecting...</span>
                   </>
                 )}
                 {partnerTyping && (
-                  <span className="text-xs text-cyan-400 animate-pulse flex items-center gap-1">
+                  <span className="text-xs text-cyan-400 animate-pulse flex items-center gap-1 flex-shrink-0">
                     <Edit3 className="w-3 h-3" />
-                    {getPartnerName()} is typing...
+                    typing...
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowSearch(!showSearch)}
-              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-cyan-500/30 transition-colors"
-              title="Search messages"
-            >
-              <Search className="w-4 h-4 text-cyan-400" />
-            </button>
-
+          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
             <button
               onClick={() => setShowCallInterface(true)}
               disabled={!isConnected}
-              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm rounded-lg font-bold shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              className="px-3 md:px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-xs md:text-sm rounded-lg font-bold shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
-              <Phone className="w-4 h-4 inline mr-2" />
-              Call
+              <Phone className="w-4 h-4 inline mr-1 md:mr-2" />
+              <span className="hidden md:inline">Call</span>
             </button>
 
             <div className="relative" ref={menuRef}>
@@ -818,53 +1090,8 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
             </div>
           </div>
         </div>
-
-        {/* Search Bar */}
-        {showSearch && (
-          <div className="mt-3 animate-fadeIn">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search messages..."
-                className="w-full bg-gray-800 text-white pl-10 pr-10 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 border border-cyan-500/20"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2"
-                >
-                  <X className="w-4 h-4 text-gray-400 hover:text-white" />
-                </button>
-              )}
-            </div>
-            {searchQuery && filteredMessages.length > 0 && (
-              <div className="mt-2 bg-gray-800/90 rounded-lg p-2 max-h-40 overflow-y-auto">
-                <p className="text-xs text-gray-400 mb-2">{filteredMessages.length} results found</p>
-                {filteredMessages.slice(0, 5).map(msg => (
-                  <button
-                    key={msg._id}
-                    onClick={() => {
-                      scrollToMessage(msg._id);
-                      setShowSearch(false);
-                      setSearchQuery('');
-                    }}
-                    className="w-full text-left p-2 hover:bg-gray-700 rounded text-sm text-gray-300 truncate"
-                  >
-                    <span className="font-bold text-cyan-400">
-                      {isMyMessage(msg) ? 'You' : getPartnerName()}:
-                    </span> {msg.message}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </header>
 
-      {/* Incoming Call Notification */}
       {incomingCallData && callRinging && (
         <div className="flex-shrink-0 bg-gradient-to-r from-blue-900 to-purple-900 border-b border-blue-500/50 p-4 z-[85] animate-fadeIn">
           <div className="flex items-center justify-between">
@@ -909,12 +1136,11 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      {/* Error Message */}
       {error && (
         <div className="flex-shrink-0 bg-red-900/60 border-b border-red-500/50 p-3 z-[75] animate-fadeIn">
-          <div className="flex items-center justify-between max-w-6xl mx-auto">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-300" />
+              <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
               <p className="text-red-300 text-sm">{error}</p>
             </div>
             <button onClick={() => setError('')}>
@@ -924,12 +1150,11 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      {/* Success Message */}
       {success && (
         <div className="flex-shrink-0 bg-green-900/60 border-b border-green-500/50 p-3 z-[75] animate-fadeIn">
-          <div className="flex items-center justify-between max-w-6xl mx-auto">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-green-300" />
+              <Check className="w-4 h-4 text-green-300 flex-shrink-0" />
               <p className="text-green-300 text-sm">{success}</p>
             </div>
             <button onClick={() => setSuccess('')}>
@@ -939,8 +1164,7 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-gray-950 via-slate-900 to-gray-950 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-4 bg-gradient-to-b from-gray-950 via-slate-900 to-gray-950 custom-scrollbar">
         {isLoadingMessages ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
@@ -950,203 +1174,147 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           </div>
         ) : messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">
-            <div className="text-center">
+            <div className="text-center px-4">
               <Heart className="w-20 h-20 text-pink-400 mx-auto mb-4 animate-pulse" />
               <p className="text-gray-400 text-xl font-bold mb-2">Your Love Story Begins Here 💖</p>
               <p className="text-gray-500 text-sm">Send your first message to start chatting</p>
             </div>
           </div>
         ) : (
-          messages.map((message, index) => {
-            const showDate = index === 0 || formatDate(messages[index - 1].timestamp) !== formatDate(message.timestamp);
+          messages.map((message) => {
             const isMine = isMyMessage(message);
             const hasReply = message.replyTo && message.replyTo.messageId;
 
             return (
-              <div key={message._id} ref={el => messageRefs.current[message._id] = el}>
-                {showDate && (
-                  <div className="flex justify-center my-6">
-                    <span className="bg-gray-800/80 text-gray-400 text-xs font-semibold px-4 py-1.5 rounded-full border border-gray-700/50">
-                      {formatDate(message.timestamp)}
-                    </span>
-                  </div>
-                )}
-
-                <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} group`}>
-                  <div 
-                    className={`message-menu-container relative max-w-xs lg:max-w-md ${
-                      isMine 
-                        ? 'bg-gradient-to-br from-cyan-600 to-blue-600 text-white rounded-2xl rounded-br-none' 
-                        : 'bg-gray-800 text-gray-100 rounded-2xl rounded-bl-none'
-                    } p-3 border ${
-                      isMine ? 'border-cyan-400/20' : 'border-gray-600/30'
-                    } shadow-xl hover:shadow-2xl transition-all cursor-pointer`}
-                    onClick={() => setMessageMenuId(messageMenuId === message._id ? null : message._id)}
-                  >
-                    {/* Reply Context */}
-                    {hasReply && (
-                      <div 
-                        className={`mb-2 pb-2 border-b ${
-                          isMine ? 'border-white/30 bg-white/10' : 'border-gray-500/30 bg-gray-900/30'
-                        } rounded-lg p-2 cursor-pointer hover:bg-opacity-20 transition-all`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          scrollToMessage(message.replyTo.messageId);
-                        }}
-                      >
-                        <div className="flex items-start gap-2">
-                          <Reply className="w-3 h-3 opacity-80 mt-0.5 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs opacity-90 font-bold mb-1">
-                              {message.replyTo.senderId === (userData.id || userData._id) ? 'You' : getPartnerName()}
-                            </p>
-                            <p className="text-xs opacity-80 truncate italic bg-black/20 px-2 py-1 rounded">
-                              "{message.replyTo.message}"
-                            </p>
-                          </div>
+              <div key={message._id} ref={el => messageRefs.current[message._id] = el} className={`flex ${isMine ? 'justify-end' : 'justify-start'} group`}>
+                <div 
+                  className={`message-menu-container relative max-w-xs sm:max-w-sm md:max-w-md ${
+                    isMine 
+                      ? 'bg-gradient-to-br from-cyan-600 to-blue-600 text-white rounded-2xl rounded-br-none' 
+                      : 'bg-gray-800 text-gray-100 rounded-2xl rounded-bl-none'
+                  } p-3 border ${
+                    isMine ? 'border-cyan-400/20' : 'border-gray-600/30'
+                  } shadow-xl hover:shadow-2xl transition-all cursor-pointer`}
+                  onClick={() => setMessageMenuId(messageMenuId === message._id ? null : message._id)}
+                >
+                  {hasReply && (
+                    <div 
+                      className={`mb-2 pb-2 border-b ${
+                        isMine ? 'border-white/30 bg-white/10' : 'border-gray-500/30 bg-gray-900/30'
+                      } rounded-lg p-2 cursor-pointer hover:bg-opacity-20 transition-all`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        scrollToMessage(message.replyTo.messageId);
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <Reply className="w-3 h-3 opacity-80 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs opacity-90 font-bold mb-1">
+                            {message.replyTo.senderId === (userData.id || userData._id) ? 'You' : getPartnerName()}
+                          </p>
+                          <p className="text-xs opacity-80 truncate italic bg-black/20 px-2 py-1 rounded">
+                            "{message.replyTo.message}"
+                          </p>
                         </div>
                       </div>
-                    )}
-
-                    {/* Message Content */}
-                    {editingMessage === message._id ? (
-                      <div className="space-y-2">
-                        <textarea
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          className="w-full bg-black/30 text-white px-3 py-2 rounded text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-cyan-400 min-h-[60px] resize-none"
-                          autoFocus
-                          maxLength={1000}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault();
-                              saveEditMessage();
-                            }
-                            if (e.key === 'Escape') {
-                              cancelEdit();
-                            }
-                          }}
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              saveEditMessage();
-                            }}
-                            className="flex-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded font-semibold transition-colors"
-                          >
-                            <Check className="w-3 h-3 inline mr-1" />
-                            Save
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              cancelEdit();
-                            }}
-                            className="flex-1 text-xs bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded font-semibold transition-colors"
-                          >
-                            <X className="w-3 h-3 inline mr-1" />
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <MessageContent message={message} />
-                    )}
-
-                    {/* Message Footer */}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/20 text-xs opacity-80">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3 h-3" />
-                        <span>{formatTime(message.timestamp)}</span>
-                        {message.edited && (
-                          <span className="text-[10px] italic opacity-70">(edited)</span>
-                        )}
-                      </div>
-                      {isMine && (
-                        <div className="flex items-center gap-1">
-                          {message.readBy && message.readBy.length > 1 ? (
-                            <CheckCheck className="w-4 h-4 text-cyan-200" />
-                          ) : (
-                            <Check className="w-4 h-4 text-cyan-300" />
-                          )}
-                        </div>
-                      )}
                     </div>
+                  )}
 
-                    {/* Message Menu */}
-                    {messageMenuId === message._id && !message.deleted && (
-                      <div className="absolute top-full left-0 mt-1 bg-gray-800 rounded-lg shadow-2xl border border-purple-500/30 py-1 z-[60] min-w-[160px] animate-fadeIn">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleReplyMessage(message);
-                          }} 
-                          className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
-                        >
-                          <Reply className="w-3.5 h-3.5" /> Reply
-                        </button>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyMessage(message.message);
-                          }} 
-                          className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
-                        >
-                          <Copy className="w-3.5 h-3.5" /> Copy
-                        </button>
-                        {isMine && (
-                          <>
-                            <div className="border-t border-gray-700 my-1"></div>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                startEditMessage(message);
-                              }} 
-                              className="w-full px-4 py-2 text-left text-blue-400 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" /> Edit
-                            </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteMessage(message._id);
-                              }} 
-                              className="w-full px-4 py-2 text-left text-red-400 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" /> Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Quick Actions (visible on hover) */}
-                    <div className="absolute -top-8 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800/90 rounded-lg px-2 py-1 flex gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleReplyMessage(message);
-                        }}
-                        className="p-1 hover:bg-gray-700 rounded"
-                        title="Reply"
-                      >
-                        <Reply className="w-3 h-3 text-cyan-400" />
-                      </button>
-                      {isMine && (
+                  {editingMessage === message._id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        className="w-full bg-black/30 text-white px-3 py-2 rounded text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-cyan-400 min-h-[60px] resize-none"
+                        autoFocus
+                        maxLength={1000}
+                      />
+                      <div className="flex gap-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            startEditMessage(message);
+                            saveEditMessage();
                           }}
-                          className="p-1 hover:bg-gray-700 rounded"
-                          title="Edit"
+                          className="flex-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded font-semibold transition-colors"
                         >
-                          <Edit3 className="w-3 h-3 text-blue-400" />
+                          Save
                         </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            cancelEdit();
+                          }}
+                          className="flex-1 text-xs bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded font-semibold transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    renderMessageContent(message)
+                  )}
+
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/20 text-xs opacity-80">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3 h-3" />
+                      <span>{formatTime(message.timestamp)}</span>
+                      {message.edited && (
+                        <span className="text-[10px] italic opacity-70">(edited)</span>
                       )}
                     </div>
+                    {isMine && (
+                      <div className="flex items-center gap-1">
+                        <CheckCheck className="w-4 h-4 text-cyan-200" />
+                      </div>
+                    )}
                   </div>
+
+                  {messageMenuId === message._id && !message.deleted && (
+                    <div className="absolute top-full left-0 mt-1 bg-gray-800 rounded-lg shadow-2xl border border-purple-500/30 py-1 z-[60] min-w-[160px] animate-fadeIn">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleReplyMessage(message);
+                        }} 
+                        className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <Reply className="w-3.5 h-3.5" /> Reply
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyMessage(message.message);
+                        }} 
+                        className="w-full px-4 py-2 text-left text-gray-300 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
+                      >
+                        <Copy className="w-3.5 h-3.5" /> Copy
+                      </button>
+                      {isMine && (
+                        <>
+                          <div className="border-t border-gray-700 my-1"></div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEditMessage(message);
+                            }} 
+                            className="w-full px-4 py-2 text-left text-blue-400 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" /> Edit
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteMessage(message._id);
+                            }} 
+                            className="w-full px-4 py-2 text-left text-red-400 hover:bg-gray-700 text-sm flex items-center gap-2 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1155,10 +1323,9 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Reply Preview Bar */}
       {replyingTo && (
         <div className="flex-shrink-0 bg-gradient-to-r from-cyan-900/80 to-blue-900/80 border-t border-cyan-500/50 p-3 animate-fadeIn">
-          <div className="flex items-center gap-3 max-w-6xl mx-auto">
+          <div className="flex items-center gap-3">
             <Reply className="w-4 h-4 text-cyan-300 flex-shrink-0" />
             <div className="flex-1 bg-black/30 rounded-lg p-2.5 border border-cyan-500/30">
               <p className="text-xs text-cyan-300 font-bold mb-1">
@@ -1169,7 +1336,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
             <button 
               onClick={() => setReplyingTo(null)} 
               className="p-2 bg-blue-600/80 hover:bg-blue-700 rounded-lg transition-colors flex-shrink-0"
-              title="Cancel reply"
             >
               <X className="w-4 h-4 text-white" />
             </button>
@@ -1177,48 +1343,129 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         </div>
       )}
 
-      {/* Emoji Picker */}
-      {showEmojiPicker && (
-        <div className="flex-shrink-0 bg-gray-800/95 backdrop-blur-sm border-t border-cyan-500/30 p-4 animate-fadeIn">
-          <div className="max-w-6xl mx-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-300 flex items-center gap-2">
-                <Smile className="w-4 h-4 text-cyan-400" />
-                Quick Emojis
-              </h3>
-              <button
-                onClick={() => setShowEmojiPicker(false)}
-                className="p-1 hover:bg-gray-700 rounded"
-              >
-                <X className="w-4 h-4 text-gray-400" />
-              </button>
+      {showFilePreview && selectedFile && (
+        <div className="flex-shrink-0 bg-gray-800/95 backdrop-blur-sm border-t border-cyan-500/30 p-3 md:p-4 animate-fadeIn">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-gray-300 flex items-center gap-2">
+              <Paperclip className="w-4 h-4 text-cyan-400" />
+              File Preview
+            </h3>
+            <button
+              onClick={() => {
+                setShowFilePreview(false);
+                setSelectedFile(null);
+                setFilePreview(null);
+              }}
+              className="p-1 hover:bg-gray-700 rounded"
+            >
+              <X className="w-4 h-4 text-gray-400" />
+            </button>
+          </div>
+
+          <div className="bg-gray-700/50 rounded-lg p-3 border border-cyan-500/20 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-gray-800 rounded-lg flex-shrink-0">
+                {getFileIcon(getFileType(selectedFile.type))}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-white truncate">{selectedFile.name}</p>
+                <p className="text-xs text-gray-400">{formatFileSize(selectedFile.size)}</p>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {quickEmojis.map((emoji, i) => (
-                <button
-                  key={i}
-                  onClick={() => addEmoji(emoji)}
-                  className="text-2xl hover:bg-gray-700 p-2 rounded-lg transition-all hover:scale-110 active:scale-95"
-                  title={`Add ${emoji}`}
-                >
-                  {emoji}
-                </button>
-              ))}
+
+            {filePreview && (
+              <div className="bg-gray-600/30 p-2 rounded-lg overflow-x-auto">
+                <img src={filePreview} alt="Preview" className="max-h-32 max-w-full object-contain rounded" />
+              </div>
+            )}
+
+            {uploadingFile && (
+              <div className="space-y-2">
+                <div className="w-full bg-gray-600 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 text-center">{uploadProgress}% uploaded</p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={sendFile}
+                disabled={uploadingFile}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-lg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {uploadingFile ? 'Uploading...' : 'Send File'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowFilePreview(false);
+                  setSelectedFile(null);
+                  setFilePreview(null);
+                }}
+                disabled={uploadingFile}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold text-sm disabled:opacity-50 transition-all"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Message Input Area */}
-      <div className="flex-shrink-0 bg-gray-900 border-t border-cyan-500/30 p-4 shadow-lg shadow-cyan-500/10">
-        <div className="flex items-end gap-2 max-w-6xl mx-auto">
+      {showEmojiPicker && (
+        <div className="flex-shrink-0 bg-gray-800/95 backdrop-blur-sm border-t border-cyan-500/30 p-3 md:p-4 animate-fadeIn">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-gray-300 flex items-center gap-2">
+              <Smile className="w-4 h-4 text-cyan-400" />
+              Quick Emojis
+            </h3>
+            <button
+              onClick={() => setShowEmojiPicker(false)}
+              className="p-1 hover:bg-gray-700 rounded"
+            >
+              <X className="w-4 h-4 text-gray-400" />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {quickEmojis.map((emoji, i) => (
+              <button
+                key={i}
+                onClick={() => addEmoji(emoji)}
+                className="text-2xl hover:bg-gray-700 p-2 rounded-lg transition-all hover:scale-110 active:scale-95"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex-shrink-0 bg-gray-900 border-t border-cyan-500/30 p-3 md:p-4 shadow-lg shadow-cyan-500/10">
+        <div className="flex items-end gap-2">
           <button
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
             className={`p-2.5 rounded-lg ${showEmojiPicker ? 'bg-cyan-600' : 'bg-gray-800'} hover:bg-gray-700 border border-cyan-500/30 transition-all flex-shrink-0`}
-            title="Emojis"
           >
             <Smile className={`w-5 h-5 ${showEmojiPicker ? 'text-white' : 'text-cyan-400'}`} />
           </button>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!isConnected || !roomValidated}
+            className="p-2.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-cyan-500/30 transition-all flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Paperclip className="w-5 h-5 text-cyan-400" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileSelect}
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+            className="hidden"
+          />
 
           <div className="flex-1 relative">
             <textarea
@@ -1251,13 +1498,11 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
             onClick={sendMessage}
             disabled={!newMessage.trim() || !isConnected || !roomValidated}
             className="p-3 rounded-lg bg-gradient-to-br from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-500/40 transition-all active:scale-95 flex-shrink-0"
-            title="Send message"
           >
             <Send className="w-5 h-5 text-white" />
           </button>
         </div>
 
-        {/* Connection Status Footer */}
         {!isConnected && (
           <div className="text-center mt-2">
             <p className="text-xs text-yellow-400 flex items-center justify-center gap-2">
@@ -1268,7 +1513,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
         )}
       </div>
 
-      {/* Call Interface Modal */}
       {showCallInterface && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[999] flex items-center justify-center p-4">
           <div className="w-full max-w-5xl h-[90vh] bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-2xl border border-purple-500/30 overflow-hidden">
@@ -1292,7 +1536,6 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
           </div>
         </div>
       )}
-
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
@@ -1347,6 +1590,12 @@ const LoveChat = ({ roomData, userData, onLeaveChat, onNavigateHome, onNavigateT
 
         textarea::-webkit-scrollbar-thumb:hover {
           background: rgba(107, 114, 128, 0.7);
+        }
+
+        @media (max-width: 640px) {
+          textarea {
+            font-size: 16px;
+          }
         }
       `}</style>
     </div>

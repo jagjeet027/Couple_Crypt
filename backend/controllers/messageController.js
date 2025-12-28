@@ -91,6 +91,14 @@ const sendFileMessage = async (req, res) => {
     const newMessage = new Message(messageData);
     await newMessage.save();
 
+    // CRITICAL FIX: Emit the file message to the room via socket
+    // Get io instance from req.app
+    const io = req.app.get('io');
+    if (io) {
+      io.to(roomId).emit('new-message', newMessage);
+      console.log('File message emitted to room:', roomId);
+    }
+
     res.status(201).json({
       success: true,
       message: 'File sent',
