@@ -25,7 +25,7 @@ const __dirname = dirname(__filename);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://couple-crypt-q6us.onrender.com/auth',
+  'https://couple-crypt-q6us.onrender.com',
   process.env.CLIENT_URL
 ].filter(Boolean);
 
