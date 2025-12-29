@@ -25,7 +25,7 @@ const __dirname = dirname(__filename);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://lovevault.onrender.com',
+  'https://couple-crypt-q6us.onrender.com/auth',
   process.env.CLIENT_URL
 ].filter(Boolean);
 
@@ -97,6 +97,10 @@ app.use('*', (req, res) => {
     success: false,
     message: 'Route not found'
   });
+});
+
+app.get('/', (req, res) => {
+  res.send('Welcome to the Couple Crypt API');
 });
 
 const PORT = process.env.PORT || 2004;
